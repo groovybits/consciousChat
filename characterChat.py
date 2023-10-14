@@ -46,6 +46,28 @@ def convert_numbers_to_words(text):
     text_with_words = re.sub(r'\b\d+(\.\d+)?\b', num_to_words, text)
     return text_with_words
 
+def clean_text_for_tts(text):
+    # Convert numbers to words
+    p = inflect.engine()
+    text = re.sub(r'\b\d+(\.\d+)?\b', lambda match: p.number_to_words(match.group()), text)
+
+    # Strip out non-speaking characters
+    text = re.sub(r'[^a-zA-Z0-9 .,?!]', '', text)
+
+    # Add a pause after punctuation
+    text = text.replace('.', '. ')
+    text = text.replace(',', ', ')
+    text = text.replace('?', '? ')
+    text = text.replace('!', '! ')
+
+    return text
+
+def check_min(value):
+    ivalue = int(value)
+    if ivalue < 2:
+        raise argparse.ArgumentTypeError("%s is an invalid value for the number of tokens to speak! It should be 2 or more." % value)
+    return ivalue
+
 parser = argparse.ArgumentParser()
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf")
 parser.add_argument("-q", "--question", type=str, default="How has your day been")
@@ -60,7 +82,7 @@ parser.add_argument("-apr", "--aisamplingrate", type=int, default=aimodel.config
 parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8)
 parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0)
 parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate)
-parser.add_argument("-tts", "--tokenstospeak", type=int, default=3)
+parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=4)
 args = parser.parse_args()
 
 ai_speaking_rate = args.aispeakingrate
@@ -148,6 +170,7 @@ def converse(question):
 
                 if (token_count % args.tokenstospeak == 0) and (sub_token[len(sub_token)-1] in [' ', '\n', '.']):
                     line = ''.join(tokens)
+                    line = clean_text_for_tts(line)  # clean up the text for TTS
                     speak_line(line)
                     tokens = []
 
