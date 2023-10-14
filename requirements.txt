@@ -1,0 +1,10 @@
+huggingface_hub
+transformers
+accelerate
+soundfile
+torch
+pydub
+simpleaudio
+inflect
+sounddevice
+
