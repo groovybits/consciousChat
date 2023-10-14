@@ -1,6 +1,5 @@
 #!/usr/local/bin/python3
 
-
 """
 Chris Kennedy (C) 2023 The Groovy Organization
 Apache license
@@ -22,11 +21,15 @@ import pyaudio
 import wave
 import os
 
-
+## AI
 aimodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
 aitokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
+
+## Human
 usermodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
 usertokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
+
+DEBUG = False
 
 def convert_numbers_to_words(text):
     p = inflect.engine()
@@ -57,6 +60,7 @@ parser.add_argument("-apr", "--aisamplingrate", type=int, default=aimodel.config
 parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8)
 parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0)
 parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate)
+parser.add_argument("-tts", "--tokenstospeak", type=int, default=3)
 args = parser.parse_args()
 
 ai_speaking_rate = args.aispeakingrate
@@ -73,92 +77,92 @@ usermodel.noise_scale = user_noise_scale
 
 llm = Llama(model_path=args.model, n_ctx=32768)
 
-output = llm(
+def get_user_input():
+    return input("You: ")
+
+def converse(question):
+    output = llm(
         "I am %s: %s \n\nYourname is %s: %s\n\nQuestion from %s: %s\n\nAnswer:" % (
             args.username,
             args.userpersonality,
             args.ainame,
             args.aipersonality,
             args.username,
-            args.question),
-    max_tokens=0,
-    temperature=0.8,
-    stream=True,
-    #stop=["I am %s:" % args.username, " "],
-    echo=False,
-)
+            question),
+        max_tokens=0,
+        temperature=0.8,
+        stream=True,
+        #stop=["I am %s:" % args.username, " "],
+        echo=False,
+    )
 
-def speak_line(line):
-    if not line:
-        # If line is empty, do nothing and return early
-        return
-    print("Speaking line: %s\n" % line)
+    def speak_line(line):
+        if not line:
+            return
+        if DEBUG:
+            print("Speaking line: %s\n" % line)
 
-    # Convert numbers in the line to words
-    aitext = convert_numbers_to_words(line)
+        aitext = convert_numbers_to_words(line)
+        aiinputs = aitokenizer(aitext, return_tensors="pt")
+        aiinputs['input_ids'] = aiinputs['input_ids'].long()
 
-    # Tokenize the text for the model
-    aiinputs = aitokenizer(aitext, return_tensors="pt")
+        with torch.no_grad():
+            aioutput = aimodel(**aiinputs).waveform
 
-    # Ensure input_ids is of data type Long
-    aiinputs['input_ids'] = aiinputs['input_ids'].long()
+        waveform_np = aioutput.squeeze().numpy().T
+        buf = io.BytesIO()
+        sf.write(buf, waveform_np, ai_sampling_rate, format='WAV')
+        buf.seek(0)
 
-    # Generate the audio waveform
-    with torch.no_grad():
-        aioutput = aimodel(**aiinputs).waveform
+        wave_obj = wave.open(buf)
+        p = pyaudio.PyAudio()
+        stream = p.open(format=p.get_format_from_width(wave_obj.getsampwidth()),
+                        channels=wave_obj.getnchannels(),
+                        rate=wave_obj.getframerate(),
+                        output=True)
 
-    # Convert the waveform to a NumPy array and transpose it
-    waveform_np = aioutput.squeeze().numpy().T
+        while True:
+            data = wave_obj.readframes(1024)
+            if not data:
+                break
+            stream.write(data)
 
-    # Write the waveform to a BytesIO buffer
-    buf = io.BytesIO()
-    sf.write(buf, waveform_np, ai_sampling_rate, format='WAV')
-    buf.seek(0)
+        stream.stop_stream()
+        stream.close()
+        p.terminate()
 
-    # Open the waveform with the wave module
-    wave_obj = wave.open(buf)
+    tokens = []
 
-    # Open a PyAudio stream
-    p = pyaudio.PyAudio()
-    stream = p.open(format=p.get_format_from_width(wave_obj.getsampwidth()),
-                    channels=wave_obj.getnchannels(),
-                    rate=wave_obj.getframerate(),
-                    output=True)
-
-    # Play the audio stream
-    while True:
-        data = wave_obj.readframes(1024)
-        if not data:
-            break
-        stream.write(data)
-
-    # Stop the stream, close the stream and PyAudio instance
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
-
-# Initialize an empty list to accumulate tokens
-tokens = []
-
-# Iterate through the output generator
-for item in output:
-    print("Got Item: %s\n" % json.dumps(item))
-    # Extract the token text from the item
-    token = item['choices'][0]['text']
-
-    # Assume newline token is represented as '\n'
-    if token == '\n':
-        # Join the accumulated tokens to form a line
-        line = ''.join(tokens)
-        # Speak the line
-        speak_line(line)
-        # Reset the tokens list for the next line
-        tokens = []
-    else:
-        # Accumulate the tokens
+    token_count = 0
+    tokens_to_speak = 0
+    for item in output:
+        if DEBUG:
+            print("Got Item: %s\n" % json.dumps(item))
+        token = item['choices'][0]['text']
         tokens.append(token)
+        token_count += 1
+        print("%s" % token, end='', flush=True)
 
-# Handle any remaining tokens (if the text doesn't end with a newline)
-if tokens:
-    line = ''.join(tokens)
-    speak_line(line)
+        if (token_count % args.tokenstospeak == 0) and (token[len(token)-1] == ' ' or token[len(token)-1] == '\n' or token[len(token)-1] == '.'):
+            line = ''.join(tokens)
+            speak_line(line)
+            tokens = []
+
+    if tokens:  # if there are any remaining tokens, speak the last line
+        line = ''.join(tokens)
+        speak_line(line)
+
+if __name__ == "__main__":
+    initial_question = args.question
+    converse(initial_question)
+
+    while True:
+        try:
+            print("Press Enter to continue, or Ctrl+C to exit.")
+            input()
+            next_question = get_user_input()
+            converse(next_question)
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            break
+
