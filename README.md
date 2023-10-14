@@ -17,11 +17,17 @@ Conscious Chat is an innovative project aimed at emulating conscious interaction
 - **Customizable Personalities**: Tailor the personality of AI and user entities to your liking.
 - **Local Execution**: All functionalities are available for free when run locally.
 
+## Recommended models
+
+- TTS: https://huggingface.co/facebook/mms-tts-eng
+- LLM: https://huggingface.co/TheBloke/zephyr-7B-alpha-GGUF
+
 ## Setup and Usage
 
 ### Prerequisites
 
 - Python 3.x
+- Python framework for llama.cpp from https://github.com/abetlen/llama-cpp-python
 - Install the required packages from `requirements.txt` using pip:
   ```bash
   pip install -r requirements.txt
