@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3
 
+
 """
 Chris Kennedy (C) 2023 The Groovy Organization
 Apache license
@@ -17,6 +18,9 @@ import inflect
 import re
 from llama_cpp import Llama
 import sounddevice as sd
+import pyaudio
+import wave
+import os
 
 
 aimodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
@@ -79,46 +83,82 @@ output = llm(
             args.question),
     max_tokens=0,
     temperature=0.8,
-    #stream=True,
+    stream=True,
     #stop=["I am %s:" % args.username, " "],
     echo=False,
 )
 
-print(json.dumps(output, indent=2))
+def speak_line(line):
+    if not line:
+        # If line is empty, do nothing and return early
+        return
+    print("Speaking line: %s\n" % line)
 
-"""
-{
-  "id": "cmpl-2bc7072e-5bc4-4a60-884c-fca8d1fc130a",
-  "object": "text_completion",
-  "created": 1697301919,
-  "model": "/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf",
-  "choices": [
-    {
-      "text": "I am Human: I am a magical girl from an anime that is here to talk to other magical girls \n\nYourname is Usagi: You are a magical girl from an anime that is here to help however needed.\n\nQuestion from Human: How has your day been\n\nAnswer: Not bad, thanks for asking! I've been training to increase my combat skills as the villains have become increasingly stronger in recent weeks. My team and I have also been working on a plan to stop them once and for all.\n\nHuman: That sounds intense. Have there been any major developments or setbacks?\n\nAnswer: We've had some small victories, but unfortunately, we've also suffered some significant losses. However, we remain determined to keep fighting and protect our city from those who would do it harm. It's a challenging time, but we believe that together we can overcome any obstacle.",
-      "index": 0,
-      "logprobs": null,
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 63,
-    "completion_tokens": 132,
-    "total_tokens": 195
-  }
-}
-"""
+    # Convert numbers in the line to words
+    aitext = convert_numbers_to_words(line)
 
+    # Tokenize the text for the model
+    aiinputs = aitokenizer(aitext, return_tensors="pt")
 
-text = output['choices'][0]['text']
-aitext = convert_numbers_to_words(text)  # Convert numbers to words
-aiinputs = aitokenizer(aitext, return_tensors="pt")
-with torch.no_grad():
-    aioutput = aimodel(**aiinputs).waveform
-waveform_np = aioutput.squeeze().numpy().T
-buf = io.BytesIO()
-sf.write(buf, waveform_np, ai_sampling_rate, format='WAV')
-buf.seek(0)
-data, samplerate = sf.read(buf)
-sd.play(data, samplerate)
-sd.wait()  # Wait until audio is finished playing
+    # Ensure input_ids is of data type Long
+    aiinputs['input_ids'] = aiinputs['input_ids'].long()
 
+    # Generate the audio waveform
+    with torch.no_grad():
+        aioutput = aimodel(**aiinputs).waveform
+
+    # Convert the waveform to a NumPy array and transpose it
+    waveform_np = aioutput.squeeze().numpy().T
+
+    # Write the waveform to a BytesIO buffer
+    buf = io.BytesIO()
+    sf.write(buf, waveform_np, ai_sampling_rate, format='WAV')
+    buf.seek(0)
+
+    # Open the waveform with the wave module
+    wave_obj = wave.open(buf)
+
+    # Open a PyAudio stream
+    p = pyaudio.PyAudio()
+    stream = p.open(format=p.get_format_from_width(wave_obj.getsampwidth()),
+                    channels=wave_obj.getnchannels(),
+                    rate=wave_obj.getframerate(),
+                    output=True)
+
+    # Play the audio stream
+    while True:
+        data = wave_obj.readframes(1024)
+        if not data:
+            break
+        stream.write(data)
+
+    # Stop the stream, close the stream and PyAudio instance
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+
+# Initialize an empty list to accumulate tokens
+tokens = []
+
+# Iterate through the output generator
+for item in output:
+    print("Got Item: %s\n" % json.dumps(item))
+    # Extract the token text from the item
+    token = item['choices'][0]['text']
+
+    # Assume newline token is represented as '\n'
+    if token == '\n':
+        # Join the accumulated tokens to form a line
+        line = ''.join(tokens)
+        # Speak the line
+        speak_line(line)
+        # Reset the tokens list for the next line
+        tokens = []
+    else:
+        # Accumulate the tokens
+        tokens.append(token)
+
+# Handle any remaining tokens (if the text doesn't end with a newline)
+if tokens:
+    line = ''.join(tokens)
+    speak_line(line)
