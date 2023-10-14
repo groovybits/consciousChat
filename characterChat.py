@@ -68,13 +68,16 @@ def check_min(value):
         raise argparse.ArgumentTypeError("%s is an invalid value for the number of tokens to speak! It should be 2 or more." % value)
     return ivalue
 
+default_ai_name = "Usagi"
+default_human_name = "Human"
+
 parser = argparse.ArgumentParser()
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf")
 parser.add_argument("-q", "--question", type=str, default="How has your day been")
-parser.add_argument("-un", "--username", type=str, default="Human")
+parser.add_argument("-un", "--username", type=str, default=default_human_name)
 parser.add_argument("-up", "--userpersonality", type=str, default="I am a magical girl from an anime that is here to talk to other magical girls")
 parser.add_argument("-ap", "--aipersonality", type=str, default="You are a magical girl from an anime that is here to help however needed.")
-parser.add_argument("-an", "--ainame", type=str, default="Usagi")
+parser.add_argument("-an", "--ainame", type=str, default=default_ai_name)
 parser.add_argument("-mt", "--maxtokens", type=int, default=0)
 parser.add_argument("-asr", "--aispeakingrate", type=float, default=1.2)
 parser.add_argument("-ans", "--ainoisescale", type=float, default=1.0)
@@ -83,6 +86,7 @@ parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8)
 parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0)
 parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate)
 parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=4)
+parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Answer:,%s" % (default_human_name, default_ai_name))
 args = parser.parse_args()
 
 ai_speaking_rate = args.aispeakingrate
@@ -114,7 +118,7 @@ def converse(question):
         max_tokens=0,
         temperature=0.8,
         stream=True,
-        #stop=["I am %s:" % args.username, " "],
+        stop=args.stoptokens.split(','),
         echo=False,
     )
 
@@ -153,6 +157,12 @@ def converse(question):
         stream.close()
         p.terminate()
 
+
+    ## Question
+    print("Question: %s\n" % args.question)
+    question_spoken = clean_text_for_tts(args.question)
+    speak_line(question_spoken)
+
     tokens = []
 
     token_count = 0
@@ -170,13 +180,15 @@ def converse(question):
 
                 if (token_count % args.tokenstospeak == 0) and (sub_token[len(sub_token)-1] in [' ', '\n', '.']):
                     line = ''.join(tokens)
-                    line = clean_text_for_tts(line)  # clean up the text for TTS
-                    speak_line(line)
+                    if line.strip():  # check if line is not empty
+                        line = clean_text_for_tts(line)  # clean up the text for TTS
+                        speak_line(line.strip())
                     tokens = []
 
     if tokens:  # if there are any remaining tokens, speak the last line
         line = ''.join(tokens)
-        speak_line(line)
+        if line.strip():  # check if line is not empty
+            speak_line(line.strip())
 
 
 if __name__ == "__main__":
