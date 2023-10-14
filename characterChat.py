@@ -139,18 +139,22 @@ def converse(question):
         if DEBUG:
             print("Got Item: %s\n" % json.dumps(item))
         token = item['choices'][0]['text']
-        tokens.append(token)
-        token_count += 1
-        print("%s" % token, end='', flush=True)
+        sub_tokens = re.split('([ ,.\n])', token)
+        for sub_token in sub_tokens:
+            if sub_token:  # check if sub_token is not empty
+                tokens.append(sub_token)
+                token_count += 1
+                print("%s" % sub_token, end='', flush=True)
 
-        if (token_count % args.tokenstospeak == 0) and (token[len(token)-1] == ' ' or token[len(token)-1] == '\n' or token[len(token)-1] == '.'):
-            line = ''.join(tokens)
-            speak_line(line)
-            tokens = []
+                if (token_count % args.tokenstospeak == 0) and (sub_token[len(sub_token)-1] in [' ', '\n', '.']):
+                    line = ''.join(tokens)
+                    speak_line(line)
+                    tokens = []
 
     if tokens:  # if there are any remaining tokens, speak the last line
         line = ''.join(tokens)
         speak_line(line)
+
 
 if __name__ == "__main__":
     initial_question = args.question
