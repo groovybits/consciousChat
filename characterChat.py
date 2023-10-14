@@ -101,7 +101,7 @@ user_sampling_rate = args.usersamplingrate
 usermodel.speaking_rate = user_speaking_rate
 usermodel.noise_scale = user_noise_scale
 
-llm = Llama(model_path=args.model, n_ctx=32768)
+llm = Llama(model_path=args.model, n_ctx=32768, verbose=DEBUG)
 
 def get_user_input():
     return input("You: ")
@@ -119,7 +119,7 @@ def converse(question):
         temperature=0.8,
         stream=True,
         stop=args.stoptokens.split(','),
-        echo=False,
+        echo=False
     )
 
     def speak_line(line):
