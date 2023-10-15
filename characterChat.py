@@ -77,6 +77,8 @@ parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/m
 parser.add_argument("-ag", "--autogenerate", type=bool, default=False, help="Keep autogenerating the conversation without interactive prompting.")
 parser.add_argument("-ss", "--streamspeak", type=bool, default=False, help="Speak the text as tts token count chunks.")
 parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=50, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
+parser.add_argument("-ttss", "--ttsseed", type=int, default=1,
+                    help="TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow variance per line spoken.")
 parser.add_argument("-mtts", "--mintokenstospeak", type=check_min, default=12, help="Minimum number of tokens to generate before sending to TTS text to speech.")
 parser.add_argument("-q", "--question", type=str, default="", help="Question to ask initially, else you will be prompted.")
 parser.add_argument("-un", "--username", type=str, default=default_human_name, help="Your preferred name to use for your character.")
@@ -85,12 +87,12 @@ parser.add_argument("-up", "--userpersonality", type=str,
 parser.add_argument("-ap", "--aipersonality", type=str,
                     default="A magical girl from an anime that is here to help however needed.", help="AI Personality.")
 parser.add_argument("-an", "--ainame", type=str, default=default_ai_name, help="AI Character name to use.")
-parser.add_argument("-asr", "--aispeakingrate", type=float, default=1.2, help="AI speaking rate of TTS speaking.")
-parser.add_argument("-ans", "--ainoisescale", type=float, default=1.0, help="AI noisescale for TTS speaking.")
+parser.add_argument("-asr", "--aispeakingrate", type=float, default=1.0, help="AI speaking rate of TTS speaking.")
+parser.add_argument("-ans", "--ainoisescale", type=float, default=0.667, help="AI noisescale for TTS speaking.")
 parser.add_argument("-apr", "--aisamplingrate", type=int,
                     default=aimodel.config.sampling_rate, help="AI sampling rate of TTS speaking, do not change from 16000!")
 parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8, help="User speaking rate for TTS.")
-parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0, help="User noisescale for TTS speaking.")
+parser.add_argument("-uns", "--usernoisescale", type=float, default=0.667, help="User noisescale for TTS speaking.")
 parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate,
                     help="User sampling rate of TTS speaking, do not change from 16000!")
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
@@ -109,6 +111,9 @@ parser.add_argument("-re", "--roleenforcer",
                     type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}, give your thoughts and opinions as asked.\n",
                     help="Role enforcer statement with {user} and {assistant} template names replaced by the actual ones in use.")
 args = parser.parse_args()
+
+if args.ttsseed > 0:
+    set_seed(args.ttsseed)
 
 if args.autogenerate:
     args.stoptokens = ""
