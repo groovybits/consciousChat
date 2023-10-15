@@ -85,13 +85,15 @@ def check_min(value):
 default_ai_name = "Usagi"
 default_human_name = "AnimeFan"
 
+facebook_model = "facebook/mms-tts-eng"
+
 ## AI TTS Model for Speech
-aimodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
-aitokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng", is_uroman=True, normalize=True)
+aimodel = VitsModel.from_pretrained(facebook_model)
+aitokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)
 
 ## User TTS Model for Speech
-usermodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
-usertokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng", is_uroman=True, normalize=True)
+usermodel = VitsModel.from_pretrained(facebook_model)
+usertokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)
 
 
 parser = argparse.ArgumentParser()
