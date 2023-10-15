@@ -28,7 +28,9 @@ This project is licensed under the Apache License.
 
 - TTS: [facebook/mms-tts-eng](https://huggingface.co/facebook/mms-tts-eng)
     - https://huggingface.co/docs/transformers/main/en/model_doc/vits More details on config options
+    - More information: [Meta AI Launches Massively Multilingual Speech MMS Project](https://www.marktechpost.com/2023/05/30/meta-ai-launches-massively-multilingual-speech-mms-project-introducing-speech-to-text-text-to-speech-and-more-for-1000-languages/)
 - LLM: [TheBloke/zephyr-7B-alpha-GGUF](https://huggingface.co/TheBloke/zephyr-7B-alpha-GGUF)
+    - More information: https://news.ycombinator.com/item?id=37842618
 
 ## Setup and Usage
 
