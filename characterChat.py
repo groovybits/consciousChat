@@ -295,13 +295,12 @@ if __name__ == "__main__":
 
     while True:
         try:
-            print("\n--- You can push enter for the output to continue where it last left off.")
+            print("\n--- You can press the <Return> key for the output to continue where it last left off.")
             if args.episode:
                 print("Create your plotline ", end='');
             else:
                 print("Ask your question ", end='');
             print("and press the Return key to continue, or Ctrl+C to exit the program.")
-            input()
 
             next_question = get_user_input()
             prompt = "You are %s who is %s\n%s%s" % (
