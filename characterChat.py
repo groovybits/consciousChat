@@ -16,10 +16,12 @@ import io
 import inflect
 import re
 from llama_cpp import Llama
+from llama_cpp import ChatCompletionMessage
 import sounddevice as sd
 import pyaudio
 import wave
 import os
+import queue
 
 ## AI
 aimodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
@@ -28,8 +30,6 @@ aitokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
 ## Human
 usermodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
 usertokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
-
-DEBUG = False
 
 def convert_numbers_to_words(text):
     p = inflect.engine()
@@ -77,8 +77,8 @@ parser.add_argument("-ag", "--autogenerate", type=bool, default=False)
 parser.add_argument("-sonl", "--stoponnewline", type=bool, default=False)
 parser.add_argument("-q", "--question", type=str, default="How has your day been")
 parser.add_argument("-un", "--username", type=str, default=default_human_name)
-parser.add_argument("-up", "--userpersonality", type=str, default="I am a magical girl from an anime that is here to talk to other magical girls")
-parser.add_argument("-ap", "--aipersonality", type=str, default="You are a magical girl from an anime that is here to help however needed.")
+parser.add_argument("-up", "--userpersonality", type=str, default="A magical girl from an anime that is here to talk to other magical girls")
+parser.add_argument("-ap", "--aipersonality", type=str, default="A magical girl from an anime that is here to help however needed.")
 parser.add_argument("-an", "--ainame", type=str, default=default_ai_name)
 parser.add_argument("-asr", "--aispeakingrate", type=float, default=1.2)
 parser.add_argument("-ans", "--ainoisescale", type=float, default=1.0)
@@ -91,6 +91,7 @@ parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Ans
 parser.add_argument("-ctx", "--context", type=int, default=32768)
 parser.add_argument("-mt", "--maxtokens", type=int, default=0)
 parser.add_argument("-t", "--temperature", type=float, default=0.9)
+parser.add_argument("-d", "--debug", type=bool, default=False)
 args = parser.parse_args()
 
 if args.autogenerate:
@@ -108,7 +109,7 @@ user_sampling_rate = args.usersamplingrate
 usermodel.speaking_rate = user_speaking_rate
 usermodel.noise_scale = user_noise_scale
 
-llm = Llama(model_path=args.model, n_ctx=args.context, verbose=DEBUG)
+llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.debug, n_gpu_layers=0)
 
 ## Human User prompt
 def get_user_input():
@@ -118,7 +119,7 @@ def get_user_input():
 def speak_line(line):
     if not line:
         return
-    if DEBUG:
+    if args.debug:
         print("Speaking line: %s\n" % line)
 
     aitext = convert_numbers_to_words(line)
@@ -151,19 +152,13 @@ def speak_line(line):
     p.terminate()
 
 ## AI Conversation
-def converse(question):
-    output = llm(
-        "I am %s: %s \n\nYourname is %s: %s\n\nQuestion: %s\n\nAnswer:" % (
-            args.username,
-            args.userpersonality,
-            args.ainame,
-            args.aipersonality,
-            question),
+def converse(prompt, question, messages):
+    output = llm.create_chat_completion(
+        messages,
         max_tokens=args.maxtokens,
         temperature=args.temperature,
         stream=True,
-        stop=args.stoptokens.split(',') if args.stoptokens else [],  # use split() result if stoptokens is not empty
-        echo=False
+        stop=args.stoptokens.split(',') if args.stoptokens else []  # use split() result if stoptokens is not empty
     )
 
     tokens = []
@@ -175,10 +170,26 @@ def converse(question):
 
     token_count = 0
     tokens_to_speak = 0
+    role = ""
     for item in output:
-        if DEBUG:
+        if args.debug:
             print("Got Item: %s\n" % json.dumps(item))
-        token = item['choices'][0]['text']
+
+        delta = item["choices"][0]['delta']
+        token = ""
+        if 'role' in delta:
+            if args.debug:
+                print(f"\nRole: {delta['role']}: ", end='')
+            role = delta['role']
+
+        # Check if we got a token
+        if 'content' in delta:
+            if args.debug:
+                print(f"Content: {delta['content']}", end='')
+        else:
+            continue
+
+        token = item['choices'][0]['delta']['content']
         sub_tokens = re.split('([ ,.\n])', token)
         for sub_token in sub_tokens:
             if sub_token:  # check if sub_token is not empty
@@ -198,26 +209,82 @@ def converse(question):
     if tokens:  # if there are any remaining tokens, speak the last line
         line = ''.join(tokens)
         if line.strip():  # check if line is not empty
+            line = clean_text_for_tts(line)  # clean up the text for TTS
             speak_line(line.strip())
+
+    return ''.join(tokens).strip()
 
 
 ## Main
 if __name__ == "__main__":
+    # Create a queue for lines to be spoken
+    speak_queue = queue.Queue()
+    # Create a dictionary to store each person's history
+    history = {args.username: [], args.ainame: []}
+
+    ## System role
+    messages=[
+        ChatCompletionMessage(
+            # role="user",
+            role="system",
+            content="You are %s who is %s" % (args.ainame,  args.aipersonality),
+        )
+    ]
+
     initial_question = args.question
+
+    prompt = "You are %s: %s\n\n%s who is %s asked the Question: %s\n\nAnswer:" % (
+            args.ainame,
+            args.aipersonality,
+            args.username,
+            args.userpersonality,
+            initial_question)
+
+    ## User Question
+    messages.append(ChatCompletionMessage(
+            role="user",
+            content="%s" % prompt,
+        ))
 
     ## Question
     print("Question: %s\n" % initial_question)
     question_spoken = clean_text_for_tts(initial_question)
     speak_line(question_spoken)
 
-    converse(initial_question)
+    response = converse(prompt, initial_question, messages)
+
+    ## AI Response
+    messages.append(ChatCompletionMessage(
+            role="assistant",
+            content="%s answered%s" % (args.username, response),
+        ))
 
     while True:
         try:
             print("Press Enter to continue, or Ctrl+C to exit.")
             input()
             next_question = get_user_input()
-            converse(next_question)
+            prompt = "You are %s: %s\n\n%s who is %s asked the Question: %s\n\nAnswer:" % (
+                    args.ainame,
+                    args.aipersonality,
+                    args.username,
+                    args.userpersonality,
+                    next_question)
+
+            ## User Question
+            messages.append(ChatCompletionMessage(
+                    role="user",
+                    content="%s asked %s" % (args.username, next_question),
+                ))
+            response = converse(prompt, next_question, messages)
+
+            ## AI Response
+            messages.append(ChatCompletionMessage(
+                    role="assistant",
+                    content="%s answered %s" % (args.username, response),
+                ))
+
+            history[args.username].append(next_question)  # Add the user's question to the history
         except KeyboardInterrupt:
             print("\nExiting...")
             break
