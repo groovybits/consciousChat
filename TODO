@@ -1,0 +1,13 @@
+## TODO October 2023
+
+- History per chat bot with separate LLM model instance
+- Share history between bots
+- Thread off speaking and feed it while we generate text
+- Thread off bots and cooridinate them together
+- More than 2 bots at a time
+- Better speaking, female voice, pitch control
+- Stable Diffusion image generation
+- 3D Model speaking and moving to input text
+- Allow twitch chat input by chat room users
+- Allow twitch chat users to create a bot for themselves
+- Control of conversation from outside like sims
