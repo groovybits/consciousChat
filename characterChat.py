@@ -94,6 +94,7 @@ usertokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng", is_uroman=
 
 
 parser = argparse.ArgumentParser()
+parser.add_argument("-l", "--language", type=str, default="", help="Have output use another language than the default English for text and speech. See the -ro option and uroman.pl program needed.")
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf",
                     help="File path to model to load and use.")
 parser.add_argument("-ag", "--autogenerate", type=bool, default=False, help="Keep autogenerating the conversation without interactive prompting.")
@@ -149,6 +150,9 @@ if args.episode:
     args.roleenforcer.replace('Answer the question asked by', 'Create a story from the plotline given by')
     args.promptcompletion.replace('Answer:', 'Episode in Markdown Format:')
     args.promptcompletion.replace('Question', 'Plotline')
+
+if args.language != "":
+    args.promptcompletion = "%s Speak in the %s language" % (args.promptcompletion, args.language)
 
 ai_speaking_rate = args.aispeakingrate
 ai_noise_scale = args.ainoisescale

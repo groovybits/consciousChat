@@ -38,6 +38,8 @@ This project is licensed under the Apache License.
 - Python framework for llama.cpp from https://github.com/abetlen/llama-cpp-python
 - Install the required packages from `requirements.txt` with pip:
 - Uroman Perl program https://github.com/isi-nlp/uroman.git (if wanting multi-lingual speaking in more than English)
+    - Set the path to uroman.pl, where you cloned it to: "export UROMAN=`pwd`/uroman/bin".
+    - Use the "-ro True" option to romanize the TTS speaking text.
 
 ```bash
 pip install -r requirements.txt
@@ -78,6 +80,7 @@ You can initiate a chat session by running the `characterChat.py` script from yo
   -e, --episode                     Enables Episode mode
   -pc, --promptcompletion           Customizable prompt completion
   -re, --roleenforcer               Customizable role enforcer statement
+  -l, --language                    Output Text and Speech in another language
 ```
 
 ## Contributing
