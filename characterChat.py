@@ -76,7 +76,8 @@ parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/m
                     help="File path to model to load and use.")
 parser.add_argument("-ag", "--autogenerate", type=bool, default=False, help="Keep autogenerating the conversation without interactive prompting.")
 parser.add_argument("-ss", "--streamspeak", type=bool, default=False, help="Speak the text as tts token count chunks.")
-parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=12, help="Number of tokens to generate before sending to TTS text to speech.")
+parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=50, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
+parser.add_argument("-mtts", "--mintokenstospeak", type=check_min, default=12, help="Minimum number of tokens to generate before sending to TTS text to speech.")
 parser.add_argument("-q", "--question", type=str, default="", help="Question to ask initially, else you will be prompted.")
 parser.add_argument("-un", "--username", type=str, default=default_human_name, help="Your preferred name to use for your character.")
 parser.add_argument("-up", "--userpersonality", type=str,
@@ -193,9 +194,9 @@ def converse(question, messages):
     tokens = []
     speaktokens = []
     if args.streamspeak:
-        speaktokens.extend([' ', '\n', '.', '?'])
+        speaktokens.extend([' ', '\n', '.', '?', ','])
     else:
-        speaktokens.extend(['\n'])
+        speaktokens.extend(['\n', '.', '?', ','])
 
     token_count = 0
     tokens_to_speak = 0
@@ -227,7 +228,8 @@ def converse(question, messages):
                     tokens_to_speak += 1
                     print("%s" % sub_token, end='', flush=True)
 
-                    if (tokens_to_speak > args.tokenstospeak) and (sub_token[len(sub_token)-1] in speaktokens):
+                    if ((args.streamspeak and tokens_to_speak > args.tokenstospeak) or
+                            (tokens_to_speak > args.mintokenstospeak)) and (sub_token[len(sub_token)-1] in speaktokens):
                         line = ''.join(tokens)
                         tokens_to_speak = 0
                         if line.strip():  # check if line is not empty
