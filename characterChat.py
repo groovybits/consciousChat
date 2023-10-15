@@ -271,10 +271,11 @@ if __name__ == "__main__":
             print("\nPress Enter to continue, or Ctrl+C to exit.")
             input()
             next_question = get_user_input()
-            prompt = "%s: You are %s\n\n%s asked.\n\nQuestion: %s\n\nAnswer:" % (
+            prompt = "%s: You are %s\n\n%s asked. Answer the following as %s.\n\nQuestion: %s\n\nAnswer:" % (
                     args.ainame,
                     args.aipersonality,
                     args.username,
+                    args.ainame,
                     next_question)
 
             ## User Question
