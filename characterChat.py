@@ -105,7 +105,7 @@ parser.add_argument("-e", "--episode", type=bool, default=False, help="Episode m
 parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\nAnswer:",
                     help="Prompt completion like...\n\nQuestion: {user_question}\nAnswer:")
 parser.add_argument("-re", "--roleenforcer",
-                    type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}.\n",
+                    type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}, give your thoughts and opinions as asked.\n",
                     help="Role enforcer statement with {user} and {assistant} template names replaced by the actual ones in use.")
 args = parser.parse_args()
 
@@ -149,7 +149,7 @@ def speak_line(line):
     if not line:
         return
     if args.debug:
-        print("\nSpeaking line with TTS...\n")
+        print("\n--- Speaking line with TTS...\n")
 
     aitext = convert_numbers_to_words(line)
     aiinputs = aitokenizer(aitext, return_tensors="pt")
@@ -202,19 +202,19 @@ def converse(question, messages):
     role = ""
     for item in output:
         if args.doubledebug:
-            print("Got Item: %s\n" % json.dumps(item))
+            print("--- Got Item: %s\n" % json.dumps(item))
 
         delta = item["choices"][0]['delta']
         token = ""
         if 'role' in delta:
             if args.debug:
-                print(f"\nFound Role: {delta['role']}: ")
+                print(f"\n--- Found Role: {delta['role']}: ")
             role = delta['role']
 
         # Check if we got a token
         if 'content' not in delta:
             if args.doubledebug:
-                print(f"Skipping lack of content: {delta}")
+                print(f"--- Skipping lack of content: {delta}")
             continue
 
         token = delta['content']
@@ -295,12 +295,12 @@ if __name__ == "__main__":
 
     while True:
         try:
-            print("\n--- You can press the <Return> key for the output to continue where it last left off.")
+            print("\n\n--- You can press the <Return> key for the output to continue where it last left off.")
             if args.episode:
-                print("Create your plotline ", end='');
+                print("--- Create your plotline ", end='');
             else:
-                print("Ask your question ", end='');
-            print("and press the Return key to continue, or Ctrl+C to exit the program.")
+                print("--- Ask your question ", end='');
+            print("and press the Return key to continue, or Ctrl+C to exit the program.\n")
 
             next_question = get_user_input()
             prompt = "You are %s who is %s\n%s%s" % (
@@ -310,7 +310,7 @@ if __name__ == "__main__":
                     args.promptcompletion.replace('{user_question}', next_question))
 
             if args.debug:
-                print("Using Prompt:\n---\n%s\n---\n" % prompt)
+                print("\n--- Using Prompt:\n---\n%s\n---\n" % prompt)
 
             ## User Question
             messages.append(ChatCompletionMessage(
@@ -320,10 +320,10 @@ if __name__ == "__main__":
 
             # Generate the Answer
             if args.episode:
-                print(" - Generating an episode from your plotline", end='');
+                print("\n--- Generating an episode from your plotline...", end='');
             else:
-                print(" - Generating the answer to your question", end='');
-            print ("... (this may take awhile without a big GPU)")
+                print("\n--- Generating the answer to your question...", end='');
+            print ("   (this may take awhile without a big GPU)")
             response = converse(next_question, messages)
 
             ## AI Response History
@@ -332,6 +332,6 @@ if __name__ == "__main__":
                     content="%s" % response,
                 ))
         except KeyboardInterrupt:
-            print("\nExiting...")
+            print("\n--- Exiting...")
             break
 
