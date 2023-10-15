@@ -22,14 +22,25 @@ import pyaudio
 import wave
 import os
 import queue
+import subprocess
 
-## AI
-aimodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
-aitokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
+def uromanize(input_string, uroman_path):
+    """Convert non-Roman strings to Roman using the `uroman` perl package."""
+    script_path = "uroman.pl"
+    if uroman_path != "":
+        script_path = os.path.join(uroman_path, "uroman.pl")
 
-## User
-usermodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
-usertokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
+    command = ["perl", script_path]
+
+    process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Execute the perl command
+    stdout, stderr = process.communicate(input=input_string.encode())
+
+    if process.returncode != 0:
+        raise ValueError(f"Error {process.returncode}: {stderr.decode()}")
+
+    # Return the output as a string and skip the new-line character at the end
+    return stdout.decode()[:-1]
 
 def convert_numbers_to_words(text):
     p = inflect.engine()
@@ -52,7 +63,9 @@ def clean_text_for_tts(text):
     text = re.sub(r'\b\d+(\.\d+)?\b', lambda match: p.number_to_words(match.group()), text)
 
     # Strip out non-speaking characters
+    """
     text = re.sub(r'[^a-zA-Z0-9 .,?!]', '', text)
+    """
 
     # Add a pause after punctuation
     text = text.replace('.', '. ')
@@ -70,6 +83,15 @@ def check_min(value):
 
 default_ai_name = "Usagi"
 default_human_name = "AnimeFan"
+
+## AI TTS Model for Speech
+aimodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
+aitokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng", is_uroman=True, normalize=True)
+
+## User TTS Model for Speech
+usermodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
+usertokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng", is_uroman=True, normalize=True)
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf",
@@ -104,6 +126,7 @@ parser.add_argument("-t", "--temperature", type=float, default=0.9, help="Temper
 parser.add_argument("-d", "--debug", type=bool, default=False, help="Debug in a verbose manner.")
 parser.add_argument("-dd", "--doubledebug", type=bool, default=False, help="Extra debugging output, very verbose.")
 parser.add_argument("-s", "--silent", type=bool, default=False, help="Silent mode, No TTS Speaking.")
+parser.add_argument("-ro", "--romanize", type=bool, default=False, help="Romanize LLM output text before input into TTS engine.")
 parser.add_argument("-e", "--episode", type=bool, default=False, help="Episode mode, Output an TV Episode format script.")
 parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\nAnswer:",
                     help="Prompt completion like...\n\nQuestion: {user_question}\nAnswer:")
@@ -139,6 +162,7 @@ user_sampling_rate = args.usersamplingrate
 usermodel.speaking_rate = user_speaking_rate
 usermodel.noise_scale = user_noise_scale
 
+## LLM Model for Text
 llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
 ## Human User prompt
@@ -158,6 +182,14 @@ def speak_line(line):
         print("\n--- Speaking line with TTS...\n")
 
     aitext = convert_numbers_to_words(line)
+    try:
+        uroman_path = ""
+        if "UROMAN" in os.environ:
+            uroman_path = os.environ["UROMAN"]
+        if args.romanize:
+            aitext = uromanize(aitext, uroman_path=uroman_path)
+    except Exception as e:
+        print("\n--- Error romanizing input: %s" % e)
     aiinputs = aitokenizer(aitext, return_tensors="pt")
     aiinputs['input_ids'] = aiinputs['input_ids'].long()
 
@@ -238,8 +270,8 @@ def converse(question, messages):
                         line = ''.join(tokens)
                         tokens_to_speak = 0
                         if line.strip():  # check if line is not empty
-                            line = clean_text_for_tts(line)  # clean up the text for TTS
-                            speak_line(line.strip())
+                            spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
+                            speak_line(spoken_line.strip())
                         tokens = []
         else:
             tokens.append(sub_token)
@@ -250,8 +282,8 @@ def converse(question, messages):
     if tokens:  # if there are any remaining tokens, speak the last line
         line = ''.join(tokens)
         if line.strip():  # check if line is not empty
-            line = clean_text_for_tts(line)  # clean up the text for TTS
-            speak_line(line.strip())
+            spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
+            speak_line(spoken_line.strip())
 
     return ''.join(tokens).strip()
 

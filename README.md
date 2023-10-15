@@ -22,6 +22,7 @@ This project is licensed under the Apache License.
 - **Stochastic Token Generation**: The chatbot can generate a variable number of tokens per response, making the conversation feel more dynamic and natural.
 - **Stream Speak**: Streams the conversation per `tokenstospeak` value instead of speaking at new lines.
 - **Episode Mode**: Enables the output to follow a TV episode script format.
+- **Multi-Lingual**: Ability to speak in most languages on output text and voice (if uroman.pl is installed).
 
 ## Recommended Models
 
@@ -36,6 +37,7 @@ This project is licensed under the Apache License.
 - Python 3.x
 - Python framework for llama.cpp from https://github.com/abetlen/llama-cpp-python
 - Install the required packages from `requirements.txt` with pip:
+- Uroman Perl program https://github.com/isi-nlp/uroman.git (if wanting multi-lingual speaking in more than English)
 
 ```bash
 pip install -r requirements.txt
