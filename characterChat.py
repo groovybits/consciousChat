@@ -74,7 +74,8 @@ default_human_name = "Human"
 parser = argparse.ArgumentParser()
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf")
 parser.add_argument("-ag", "--autogenerate", type=bool, default=False)
-parser.add_argument("-sonl", "--stoponnewline", type=bool, default=False)
+parser.add_argument("-ss", "--streamspeak", type=bool, default=False)
+parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=12)
 parser.add_argument("-q", "--question", type=str, default="")
 parser.add_argument("-un", "--username", type=str, default=default_human_name)
 parser.add_argument("-up", "--userpersonality", type=str, default="A magical girl from an anime that is here to talk to other magical girls")
@@ -86,14 +87,14 @@ parser.add_argument("-apr", "--aisamplingrate", type=int, default=aimodel.config
 parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8)
 parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0)
 parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate)
-parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=12)
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:" % (default_human_name))
-parser.add_argument("-ctx", "--context", type=int, default=32768)
+parser.add_argument("-ctx", "--context", type=int, default=512)
 parser.add_argument("-mt", "--maxtokens", type=int, default=0)
 parser.add_argument("-t", "--temperature", type=float, default=0.9)
 parser.add_argument("-d", "--debug", type=bool, default=False)
 parser.add_argument("-s", "--silent", type=bool, default=False)
 parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\n\nAnswer:")
+parser.add_argument("-re", "--roleenforcer", type=str, default="\nCarry on a conversation with {user} who is {personality}. Do not reveal your true character as an AI, play the role.\n")
 args = parser.parse_args()
 
 if args.autogenerate:
@@ -167,10 +168,10 @@ def converse(question, messages):
 
     tokens = []
     speaktokens = []
-    if args.stoponnewline:
-        speaktokens.extend(['\n'])
+    if args.streamspeak:
+        speaktokens.extend([' ', '\n', '.', '?'])
     else:
-        speaktokens.extend([' ', '\n', '.', '?', ':'])
+        speaktokens.extend(['\n'])
 
     token_count = 0
     tokens_to_speak = 0
@@ -193,22 +194,28 @@ def converse(question, messages):
         else:
             continue
 
-        token = item['choices'][0]['delta']['content']
-        sub_tokens = re.split('([ ,.\n?:])', token)
-        for sub_token in sub_tokens:
-            if sub_token:  # check if sub_token is not empty
-                tokens.append(sub_token)
-                token_count += 1
-                tokens_to_speak += 1
-                print("%s" % sub_token, end='', flush=True)
+        token = delta['content']
+        sub_tokens = re.split('([ ,.\n?])', token)
+        if len(sub_tokens) > 0:
+            for sub_token in sub_tokens:
+                if sub_token:  # check if sub_token is not empty
+                    tokens.append(sub_token)
+                    token_count += 1
+                    tokens_to_speak += 1
+                    print("%s" % sub_token, end='', flush=True)
 
-                if (tokens_to_speak > args.tokenstospeak) and (sub_token[len(sub_token)-1] in speaktokens):
-                    line = ''.join(tokens)
-                    tokens_to_speak = 0
-                    if line.strip():  # check if line is not empty
-                        line = clean_text_for_tts(line)  # clean up the text for TTS
-                        speak_line(line.strip())
-                    tokens = []
+                    if (tokens_to_speak > args.tokenstospeak) and (sub_token[len(sub_token)-1] in speaktokens):
+                        line = ''.join(tokens)
+                        tokens_to_speak = 0
+                        if line.strip():  # check if line is not empty
+                            line = clean_text_for_tts(line)  # clean up the text for TTS
+                            speak_line(line.strip())
+                        tokens = []
+        else:
+            tokens.append(sub_token)
+            token_count += 1
+            tokens_to_speak += 1
+            print("%s" % sub_token, end='', flush=True)
 
     if tokens:  # if there are any remaining tokens, speak the last line
         line = ''.join(tokens)
@@ -221,21 +228,18 @@ def converse(question, messages):
 
 ## Main
 if __name__ == "__main__":
-    # Create a queue for lines to be spoken
+    # TODO Create a queue for lines to be spoken
     speak_queue = queue.Queue()
-    # Create a dictionary to store each person's history
-    history = {args.username: [], args.ainame: []}
 
     ## System role
     messages=[
         ChatCompletionMessage(
             # role="user",
             role="system",
-            content="You are %s who is %s. Carry on a conversation with %s who is %s. Do not reveal your true character as an AI, play the role." % (
+            content="You are %s who is %s. %s" % (
                 args.ainame,
                 args.aipersonality,
-                args.username,
-                args.userpersonality),
+                args.roleenforcer.replace('{user}', args.username).replace('{personality}', args.userpersonality)),
         )
     ]
 
@@ -276,19 +280,17 @@ if __name__ == "__main__":
             messages.append(ChatCompletionMessage(
                 # role="user",
                 role="system",
-                content="You are %s who is %s. Carry on a conversation with %s who is %s. Do not reveal your true character as an AI, play the role." % (
+                content="You are %s who is %s. %s" % (
                     args.ainame,
                     args.aipersonality,
-                    args.username,
-                    args.userpersonality),
+                    args.roleenforcer.replace('{user}', args.username).replace('{personality}', args.userpersonality)),
             ))
 
             next_question = get_user_input()
-            prompt = "%s: You are %s\n\n%s asked. Answer the following as %s.\n%s" % (
+            prompt = "You are %s who is %s\n\n%s asked you the following...\n\n%s" % (
                     args.ainame,
                     args.aipersonality,
                     args.username,
-                    args.ainame,
                     args.promptcompletion.replace('"{user_question}"', next_question))
 
             ## User Question
@@ -296,16 +298,16 @@ if __name__ == "__main__":
                     role="user",
                     content="%s" % prompt,
                 ))
+
+            # Generate the Answer
             print (" - Generating the answer to your question... (this may take awhile without a big GPU)")
             response = converse(next_question, messages)
 
-            ## AI Response
+            ## AI Response History
             messages.append(ChatCompletionMessage(
                     role="assistant",
                     content="%s: %s" % (args.username, response),
                 ))
-
-            history[args.username].append(next_question)  # Add the user's question to the history
         except KeyboardInterrupt:
             print("\nExiting...")
             break

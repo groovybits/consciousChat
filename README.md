@@ -53,7 +53,8 @@ You can initiate a chat session by running the `characterChat.py` script from yo
   -h, --help                        Show this help message and exit
   -m, --model MODEL                 Path to the model
   -ag, --autogenerate               Enables automatic response generation
-  -sonl, --stoponnewline            Stops the conversation on a new line
+  -ss, --streamspeak                Streams the conversation per tts tokenstospeak value instead of speaking at new lines
+  -tts, --tokenstospeak TOKENSTOSPEAK       Minimum number of tokens to speak
   -q, --question QUESTION           Question to ask the AI
   -un, --username USERNAME          Username
   -up, --userpersonality USERPERSONALITY     User Personality description
@@ -65,7 +66,6 @@ You can initiate a chat session by running the `characterChat.py` script from yo
   -usr, --userspeakingrate USERSPEAKINGRATE  User Speaking rate
   -uns, --usernoisescale USERNOISESCALE      User Noise scale
   -upr, --usersamplingrate USERSAMPLINGRATE  User Sampling rate
-  -tts, --tokenstospeak TOKENSTOSPEAK       Minimum number of tokens to speak
   -sts, --stoptokens STOPTOKENS     Specific tokens at which to stop speaking
   -ctx, --context CONTEXT           Context window size for the LLM
   -mt, --maxtokens MAXTOKENS        Maximum tokens for response
