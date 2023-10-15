@@ -75,7 +75,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf")
 parser.add_argument("-ag", "--autogenerate", type=bool, default=False)
 parser.add_argument("-sonl", "--stoponnewline", type=bool, default=False)
-parser.add_argument("-q", "--question", type=str, default="How has your day been")
+parser.add_argument("-q", "--question", type=str, default="")
 parser.add_argument("-un", "--username", type=str, default=default_human_name)
 parser.add_argument("-up", "--userpersonality", type=str, default="A magical girl from an anime that is here to talk to other magical girls")
 parser.add_argument("-ap", "--aipersonality", type=str, default="A magical girl from an anime that is here to help however needed.")
@@ -92,6 +92,7 @@ parser.add_argument("-ctx", "--context", type=int, default=32768)
 parser.add_argument("-mt", "--maxtokens", type=int, default=0)
 parser.add_argument("-t", "--temperature", type=float, default=0.9)
 parser.add_argument("-d", "--debug", type=bool, default=False)
+parser.add_argument("-s", "--silent", type=bool, default=False)
 args = parser.parse_args()
 
 if args.autogenerate:
@@ -117,6 +118,8 @@ def get_user_input():
 
 ## Speak a line
 def speak_line(line):
+    if args.silent:
+        return
     if not line:
         return
     if args.debug:
@@ -152,7 +155,7 @@ def speak_line(line):
     p.terminate()
 
 ## AI Conversation
-def converse(prompt, question, messages):
+def converse(question, messages):
     output = llm.create_chat_completion(
         messages,
         max_tokens=args.maxtokens,
@@ -227,61 +230,64 @@ if __name__ == "__main__":
         ChatCompletionMessage(
             # role="user",
             role="system",
-            content="You are %s who is %s" % (args.ainame,  args.aipersonality),
+            content="You are %s who is %s. Carry on a conversation with %s who is %s. Do not reveal your true character as an AI, play the role." % (
+                args.ainame,
+                args.aipersonality,
+                args.username,
+                args.userpersonality),
         )
     ]
 
     initial_question = args.question
 
-    prompt = "You are %s: %s\n\n%s who is %s asked the Question: %s\n\nAnswer:" % (
-            args.ainame,
-            args.aipersonality,
-            args.username,
-            args.userpersonality,
-            initial_question)
-
-    ## User Question
-    messages.append(ChatCompletionMessage(
-            role="user",
-            content="%s" % prompt,
-        ))
-
     ## Question
-    print("Question: %s\n" % initial_question)
-    question_spoken = clean_text_for_tts(initial_question)
-    speak_line(question_spoken)
+    if (initial_question != ""):
+        prompt = "%s: You are %s\n\n%s asked.\n\nQuestion: %s\n\nAnswer:" % (
+                args.ainame,
+                args.aipersonality,
+                args.username,
+                initial_question)
 
-    response = converse(prompt, initial_question, messages)
+        ## User Question
+        messages.append(ChatCompletionMessage(
+                role="user",
+                content="%s" % prompt,
+            ))
 
-    ## AI Response
-    messages.append(ChatCompletionMessage(
-            role="assistant",
-            content="%s answered%s" % (args.username, response),
-        ))
+        print("%s" % prompt)
+        question_spoken = clean_text_for_tts(initial_question)
+        speak_line(question_spoken)
+
+        response = converse(initial_question, messages)
+
+        ## AI Response
+        messages.append(ChatCompletionMessage(
+                role="assistant",
+                content="%s: %s" % (args.username, response),
+            ))
 
     while True:
         try:
-            print("Press Enter to continue, or Ctrl+C to exit.")
+            print("\nPress Enter to continue, or Ctrl+C to exit.")
             input()
             next_question = get_user_input()
-            prompt = "You are %s: %s\n\n%s who is %s asked the Question: %s\n\nAnswer:" % (
+            prompt = "%s: You are %s\n\n%s asked.\n\nQuestion: %s\n\nAnswer:" % (
                     args.ainame,
                     args.aipersonality,
                     args.username,
-                    args.userpersonality,
                     next_question)
 
             ## User Question
             messages.append(ChatCompletionMessage(
                     role="user",
-                    content="%s asked %s" % (args.username, next_question),
+                    content="%s" % prompt,
                 ))
-            response = converse(prompt, next_question, messages)
+            response = converse(next_question, messages)
 
             ## AI Response
             messages.append(ChatCompletionMessage(
                     role="assistant",
-                    content="%s answered %s" % (args.username, response),
+                    content="%s: %s" % (args.username, response),
                 ))
 
             history[args.username].append(next_question)  # Add the user's question to the history
