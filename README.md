@@ -26,6 +26,7 @@ This project is licensed under the Apache License.
 ## Recommended Models
 
 - TTS: [facebook/mms-tts-eng](https://huggingface.co/facebook/mms-tts-eng)
+    - https://huggingface.co/docs/transformers/main/en/model_doc/vits More details on config options
 - LLM: [TheBloke/zephyr-7B-alpha-GGUF](https://huggingface.co/TheBloke/zephyr-7B-alpha-GGUF)
 
 ## Setup and Usage
