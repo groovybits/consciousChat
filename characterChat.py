@@ -102,7 +102,7 @@ parser.add_argument("-d", "--debug", type=bool, default=False, help="Debug in a 
 parser.add_argument("-dd", "--doubledebug", type=bool, default=False, help="Extra debugging output, very verbose.")
 parser.add_argument("-s", "--silent", type=bool, default=False, help="Silent mode, No TTS Speaking.")
 parser.add_argument("-e", "--episode", type=bool, default=False, help="Episode mode, Output an TV Episode format script.")
-parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\nAnswer in Markdown Format:",
+parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\nAnswer:",
                     help="Prompt completion like...\n\nQuestion: {user_question}\nAnswer:")
 parser.add_argument("-re", "--roleenforcer",
                     type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}.\n",
@@ -116,9 +116,9 @@ if args.doubledebug:
     args.debug = True
 
 if args.episode:
-    args.roleenforcer = args.roleenforcer + "Format the output like a TV episode script using markdown.\n"
+    args.roleenforcer = "%s Format the output like a TV episode script using markdown.\n" % args.roleenforcer
     args.roleenforcer.replace('Answer the question asked by', 'Create a story from the plotline given by')
-    args.promptcompletion.replace(' in Markdown Format', '')
+    args.promptcompletion.replace('Answer:', 'Episode in Markdown Format:')
     args.promptcompletion.replace('Question', 'Plotline')
 
 ai_speaking_rate = args.aispeakingrate
@@ -149,7 +149,7 @@ def speak_line(line):
     if not line:
         return
     if args.debug:
-        print("Speaking line with TTS...\n")
+        print("\nSpeaking line with TTS...\n")
 
     aitext = convert_numbers_to_words(line)
     aiinputs = aitokenizer(aitext, return_tensors="pt")
@@ -319,7 +319,11 @@ if __name__ == "__main__":
                 ))
 
             # Generate the Answer
-            print (" - Generating the answer to your question... (this may take awhile without a big GPU)")
+            if args.episode:
+                print(" - Generating an episode from your plotline", end='');
+            else:
+                print(" - Generating the answer to your question", end='');
+            print ("... (this may take awhile without a big GPU)")
             response = converse(next_question, messages)
 
             ## AI Response History
