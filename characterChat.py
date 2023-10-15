@@ -87,12 +87,13 @@ parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8)
 parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0)
 parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate)
 parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=12)
-parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:" % (default_human_name))
+parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:" % (default_human_name))
 parser.add_argument("-ctx", "--context", type=int, default=32768)
 parser.add_argument("-mt", "--maxtokens", type=int, default=0)
 parser.add_argument("-t", "--temperature", type=float, default=0.9)
 parser.add_argument("-d", "--debug", type=bool, default=False)
 parser.add_argument("-s", "--silent", type=bool, default=False)
+parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\n\nAnswer:")
 args = parser.parse_args()
 
 if args.autogenerate:
@@ -169,7 +170,7 @@ def converse(question, messages):
     if args.stoponnewline:
         speaktokens.extend(['\n'])
     else:
-        speaktokens.extend([' ', '\n', '.'])
+        speaktokens.extend([' ', '\n', '.', '?', ':'])
 
     token_count = 0
     tokens_to_speak = 0
@@ -193,7 +194,7 @@ def converse(question, messages):
             continue
 
         token = item['choices'][0]['delta']['content']
-        sub_tokens = re.split('([ ,.\n])', token)
+        sub_tokens = re.split('([ ,.\n?:])', token)
         for sub_token in sub_tokens:
             if sub_token:  # check if sub_token is not empty
                 tokens.append(sub_token)
@@ -268,21 +269,34 @@ if __name__ == "__main__":
 
     while True:
         try:
-            print("\nPress Enter to continue, or Ctrl+C to exit.")
+            print("\nPress Enter to continue, or Ctrl+C to exit.\nYou can push enter for the Question: to continue where the output left off.")
             input()
+
+            ## System personality
+            messages.append(ChatCompletionMessage(
+                # role="user",
+                role="system",
+                content="You are %s who is %s. Carry on a conversation with %s who is %s. Do not reveal your true character as an AI, play the role." % (
+                    args.ainame,
+                    args.aipersonality,
+                    args.username,
+                    args.userpersonality),
+            ))
+
             next_question = get_user_input()
-            prompt = "%s: You are %s\n\n%s asked. Answer the following as %s.\n\nQuestion: %s\n\nAnswer:" % (
+            prompt = "%s: You are %s\n\n%s asked. Answer the following as %s.\n%s" % (
                     args.ainame,
                     args.aipersonality,
                     args.username,
                     args.ainame,
-                    next_question)
+                    args.promptcompletion.replace('"{user_question}"', next_question))
 
             ## User Question
             messages.append(ChatCompletionMessage(
                     role="user",
                     content="%s" % prompt,
                 ))
+            print (" - Generating the answer to your question... (this may take awhile without a big GPU)")
             response = converse(next_question, messages)
 
             ## AI Response
