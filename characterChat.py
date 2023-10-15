@@ -27,7 +27,7 @@ import queue
 aimodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
 aitokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
 
-## Human
+## User
 usermodel = VitsModel.from_pretrained("facebook/mms-tts-eng")
 usertokenizer = AutoTokenizer.from_pretrained("facebook/mms-tts-eng")
 
@@ -69,36 +69,57 @@ def check_min(value):
     return ivalue
 
 default_ai_name = "Usagi"
-default_human_name = "Human"
+default_human_name = "Anime Fan"
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf")
-parser.add_argument("-ag", "--autogenerate", type=bool, default=False)
-parser.add_argument("-ss", "--streamspeak", type=bool, default=False)
-parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=12)
-parser.add_argument("-q", "--question", type=str, default="")
-parser.add_argument("-un", "--username", type=str, default=default_human_name)
-parser.add_argument("-up", "--userpersonality", type=str, default="A magical girl from an anime that is here to talk to other magical girls")
-parser.add_argument("-ap", "--aipersonality", type=str, default="A magical girl from an anime that is here to help however needed.")
-parser.add_argument("-an", "--ainame", type=str, default=default_ai_name)
-parser.add_argument("-asr", "--aispeakingrate", type=float, default=1.2)
-parser.add_argument("-ans", "--ainoisescale", type=float, default=1.0)
-parser.add_argument("-apr", "--aisamplingrate", type=int, default=aimodel.config.sampling_rate)
-parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8)
-parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0)
-parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate)
-parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:" % (default_human_name))
-parser.add_argument("-ctx", "--context", type=int, default=512)
-parser.add_argument("-mt", "--maxtokens", type=int, default=0)
-parser.add_argument("-t", "--temperature", type=float, default=0.9)
-parser.add_argument("-d", "--debug", type=bool, default=False)
-parser.add_argument("-s", "--silent", type=bool, default=False)
-parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\n\nAnswer:")
-parser.add_argument("-re", "--roleenforcer", type=str, default="\nCarry on a conversation with {user} who is {personality}. Do not reveal your true character as an AI, play the role.\n")
+parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf",
+                    help="File path to model to load and use.")
+parser.add_argument("-ag", "--autogenerate", type=bool, default=False, help="Keep autogenerating the conversation without interactive prompting.")
+parser.add_argument("-ss", "--streamspeak", type=bool, default=False, help="Speak the text as tts token count chunks.")
+parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=12, help="Number of tokens to generate before sending to TTS text to speech.")
+parser.add_argument("-q", "--question", type=str, default="", help="Question to ask initially, else you will be prompted.")
+parser.add_argument("-un", "--username", type=str, default=default_human_name, help="Your preferred name to use for your character.")
+parser.add_argument("-up", "--userpersonality", type=str,
+                    default="A magical girl from an anime that is here to talk to other magical girls", help="Your personality.")
+parser.add_argument("-ap", "--aipersonality", type=str,
+                    default="A magical girl from an anime that is here to help however needed.", help="AI Personality.")
+parser.add_argument("-an", "--ainame", type=str, default=default_ai_name, help="AI Character name to use.")
+parser.add_argument("-asr", "--aispeakingrate", type=float, default=1.2, help="AI speaking rate of TTS speaking.")
+parser.add_argument("-ans", "--ainoisescale", type=float, default=1.0, help="AI noisescale for TTS speaking.")
+parser.add_argument("-apr", "--aisamplingrate", type=int,
+                    default=aimodel.config.sampling_rate, help="AI sampling rate of TTS speaking, do not change from 16000!")
+parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8, help="User speaking rate for TTS.")
+parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0, help="User noisescale for TTS speaking.")
+parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate,
+                    help="User sampling rate of TTS speaking, do not change from 16000!")
+parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
+                    help="Stop tokens to use, do not change unless you know what you are doing!")
+parser.add_argument("-ctx", "--context", type=int, default=32768, help="Model context, default 32768.")
+parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
+parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
+parser.add_argument("-t", "--temperature", type=float, default=0.9, help="Temperature to set LLM Model.")
+parser.add_argument("-d", "--debug", type=bool, default=False, help="Debug in a verbose manner.")
+parser.add_argument("-dd", "--doubledebug", type=bool, default=False, help="Extra debugging output, very verbose.")
+parser.add_argument("-s", "--silent", type=bool, default=False, help="Silent mode, No TTS Speaking.")
+parser.add_argument("-e", "--episode", type=bool, default=False, help="Episode mode, Output an TV Episode format script.")
+parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\nAnswer in Markdown Format:",
+                    help="Prompt completion like...\n\nQuestion: {user_question}\nAnswer:")
+parser.add_argument("-re", "--roleenforcer",
+                    type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}.\n",
+                    help="Role enforcer statement with {user} and {assistant} template names replaced by the actual ones in use.")
 args = parser.parse_args()
 
 if args.autogenerate:
     args.stoptokens = ""
+
+if args.doubledebug:
+    args.debug = True
+
+if args.episode:
+    args.roleenforcer = args.roleenforcer + "Format the output like a TV episode script using markdown.\n"
+    args.roleenforcer.replace('Answer the question asked by', 'Create a story from the plotline given by')
+    args.promptcompletion.replace(' in Markdown Format', '')
+    args.promptcompletion.replace('Question', 'Plotline')
 
 ai_speaking_rate = args.aispeakingrate
 ai_noise_scale = args.ainoisescale
@@ -112,11 +133,14 @@ user_sampling_rate = args.usersamplingrate
 usermodel.speaking_rate = user_speaking_rate
 usermodel.noise_scale = user_noise_scale
 
-llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.debug, n_gpu_layers=0)
+llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
 ## Human User prompt
 def get_user_input():
-    return input("Question: ")
+    if args.episode:
+        return input("Plotline: ")
+    else:
+        return input("Question: ")
 
 ## Speak a line
 def speak_line(line):
@@ -125,7 +149,7 @@ def speak_line(line):
     if not line:
         return
     if args.debug:
-        print("Speaking line: %s\n" % line)
+        print("Speaking line with TTS...\n")
 
     aitext = convert_numbers_to_words(line)
     aiinputs = aitokenizer(aitext, return_tensors="pt")
@@ -177,21 +201,20 @@ def converse(question, messages):
     tokens_to_speak = 0
     role = ""
     for item in output:
-        if args.debug:
+        if args.doubledebug:
             print("Got Item: %s\n" % json.dumps(item))
 
         delta = item["choices"][0]['delta']
         token = ""
         if 'role' in delta:
             if args.debug:
-                print(f"\nRole: {delta['role']}: ", end='')
+                print(f"\nFound Role: {delta['role']}: ")
             role = delta['role']
 
         # Check if we got a token
-        if 'content' in delta:
-            if args.debug:
-                print(f"Content: {delta['content']}", end='')
-        else:
+        if 'content' not in delta:
+            if args.doubledebug:
+                print(f"Skipping lack of content: {delta}")
             continue
 
         token = delta['content']
@@ -236,10 +259,9 @@ if __name__ == "__main__":
         ChatCompletionMessage(
             # role="user",
             role="system",
-            content="You are %s who is %s. %s" % (
+            content="You are %s who is %s." % (
                 args.ainame,
-                args.aipersonality,
-                args.roleenforcer.replace('{user}', args.username).replace('{personality}', args.userpersonality)),
+                args.aipersonality),
         )
     ]
 
@@ -247,16 +269,16 @@ if __name__ == "__main__":
 
     ## Question
     if (initial_question != ""):
-        prompt = "%s: You are %s\n\n%s asked.\n\nQuestion: %s\n\nAnswer:" % (
+        prompt = "%s: You are %s\n%s%s:" % (
                 args.ainame,
                 args.aipersonality,
-                args.username,
-                initial_question)
+                args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
+                args.promptcompletion.replace('{user_question}', initial_question))
 
         ## User Question
         messages.append(ChatCompletionMessage(
                 role="user",
-                content="%s" % prompt,
+                content="%s" % initial_question,
             ))
 
         print("%s" % prompt)
@@ -268,30 +290,28 @@ if __name__ == "__main__":
         ## AI Response
         messages.append(ChatCompletionMessage(
                 role="assistant",
-                content="%s: %s" % (args.username, response),
+                content="%s" % response,
             ))
 
     while True:
         try:
-            print("\nPress Enter to continue, or Ctrl+C to exit.\nYou can push enter for the Question: to continue where the output left off.")
+            print("\n--- You can push enter for the output to continue where it last left off.")
+            if args.episode:
+                print("Create your plotline ", end='');
+            else:
+                print("Ask your question ", end='');
+            print("and press the Return key to continue, or Ctrl+C to exit the program.")
             input()
 
-            ## System personality
-            messages.append(ChatCompletionMessage(
-                # role="user",
-                role="system",
-                content="You are %s who is %s. %s" % (
-                    args.ainame,
-                    args.aipersonality,
-                    args.roleenforcer.replace('{user}', args.username).replace('{personality}', args.userpersonality)),
-            ))
-
             next_question = get_user_input()
-            prompt = "You are %s who is %s\n\n%s asked you the following...\n\n%s" % (
+            prompt = "You are %s who is %s\n%s%s" % (
                     args.ainame,
                     args.aipersonality,
-                    args.username,
-                    args.promptcompletion.replace('"{user_question}"', next_question))
+                    args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
+                    args.promptcompletion.replace('{user_question}', next_question))
+
+            if args.debug:
+                print("Using Prompt:\n---\n%s\n---\n" % prompt)
 
             ## User Question
             messages.append(ChatCompletionMessage(
@@ -306,7 +326,7 @@ if __name__ == "__main__":
             ## AI Response History
             messages.append(ChatCompletionMessage(
                     role="assistant",
-                    content="%s: %s" % (args.username, response),
+                    content="%s" % response,
                 ))
         except KeyboardInterrupt:
             print("\nExiting...")

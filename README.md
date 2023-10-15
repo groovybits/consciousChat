@@ -5,7 +5,6 @@ Multispeaker LLM locally with TTS all free if run locally
 
 Chris Kennedy (C) The Groovy Organization Apache License
 ```
-
 # Conscious Chat: Multispeaker LLM with TTS
 
 This chatbot, developed by Chris Kennedy of The Groovy Organization, creates an engaging conversation environment through the use of multispeaker Language Models (LLM) and Text-to-Speech (TTS) technology. The goal of the project is to foster multi-user interactions among multiple AI entities, creating a Game of Life-like phenomenon for human entertainment and question answering.
@@ -21,6 +20,8 @@ This project is licensed under the Apache License.
 - **Auto Generate Responses**: The chatbot can automatically generate responses without requiring manual input.
 - **Stop on New Line**: The conversation can be configured to pause when a new line is detected.
 - **Stochastic Token Generation**: The chatbot can generate a variable number of tokens per response, making the conversation feel more dynamic and natural.
+- **Stream Speak**: Streams the conversation per `tokenstospeak` value instead of speaking at new lines.
+- **Episode Mode**: Enables the output to follow a TV episode script format.
 
 ## Recommended Models
 
@@ -53,8 +54,7 @@ You can initiate a chat session by running the `characterChat.py` script from yo
   -h, --help                        Show this help message and exit
   -m, --model MODEL                 Path to the model
   -ag, --autogenerate               Enables automatic response generation
-  -ss, --streamspeak                Streams the conversation per tts tokenstospeak value instead of speaking at new lines
-  -tts, --tokenstospeak TOKENSTOSPEAK       Minimum number of tokens to speak
+  -sonl, --stoponnewline            Stops the conversation on a new line
   -q, --question QUESTION           Question to ask the AI
   -un, --username USERNAME          Username
   -up, --userpersonality USERPERSONALITY     User Personality description
@@ -66,11 +66,15 @@ You can initiate a chat session by running the `characterChat.py` script from yo
   -usr, --userspeakingrate USERSPEAKINGRATE  User Speaking rate
   -uns, --usernoisescale USERNOISESCALE      User Noise scale
   -upr, --usersamplingrate USERSAMPLINGRATE  User Sampling rate
+  -tts, --tokenstospeak TOKENSTOSPEAK       Minimum number of tokens to speak
   -sts, --stoptokens STOPTOKENS     Specific tokens at which to stop speaking
   -ctx, --context CONTEXT           Context window size for the LLM
   -mt, --maxtokens MAXTOKENS        Maximum tokens for response
   -d, --debug                       Enables debug print statements
   -s, --silent                      Disables speaking the AI's responses
+  -e, --episode                     Enables Episode mode
+  -pc, --promptcompletion           Customizable prompt completion
+  -re, --roleenforcer               Customizable role enforcer statement
 ```
 
 ## Contributing
@@ -86,4 +90,3 @@ This project is under the Apache License and is maintained by Chris Kennedy of T
 ## Try it out!
 
 Embark on a journey of interactive conversations, rich auditory experiences, and explore the realms of AI-human interactions with Conscious Chat.
-
