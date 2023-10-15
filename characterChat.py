@@ -89,6 +89,7 @@ parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0)
 parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate)
 parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=12)
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Answer:,%s" % (default_human_name, default_ai_name))
+parser.add_argument("-ctx", "--context", type=int, default=32768)
 args = parser.parse_args()
 
 if args.autogenerate:
@@ -106,11 +107,13 @@ user_sampling_rate = args.usersamplingrate
 usermodel.speaking_rate = user_speaking_rate
 usermodel.noise_scale = user_noise_scale
 
-llm = Llama(model_path=args.model, n_ctx=32768, verbose=DEBUG)
+llm = Llama(model_path=args.model, n_ctx=args.context, verbose=DEBUG)
 
+## Human User prompt
 def get_user_input():
     return input("Question: ")
 
+## Speak a line
 def speak_line(line):
     if not line:
         return
@@ -146,6 +149,7 @@ def speak_line(line):
     stream.close()
     p.terminate()
 
+## AI Conversation
 def converse(question):
     output = llm(
         "I am %s: %s \n\nYourname is %s: %s\n\nQuestion: %s\n\nAnswer:" % (
@@ -160,8 +164,6 @@ def converse(question):
         stop=args.stoptokens.split(',') if args.stoptokens else [],  # use split() result if stoptokens is not empty
         echo=False
     )
-
-
 
     tokens = []
     speaktokens = []
@@ -198,6 +200,7 @@ def converse(question):
             speak_line(line.strip())
 
 
+## Main
 if __name__ == "__main__":
     initial_question = args.question
 
