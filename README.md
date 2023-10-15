@@ -35,7 +35,7 @@ This project is licensed under the Apache License.
 - Python framework for llama.cpp from https://github.com/abetlen/llama-cpp-python
 - Install the required packages from `requirements.txt` with pip:
 
-````bash
+```bash
 pip install -r requirements.txt
 ```
 
