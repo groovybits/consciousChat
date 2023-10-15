@@ -12,7 +12,7 @@
 - Allow twitch chat users to create a bot for themselves
 - Control of conversation from outside like sims
 - Video stream MpegTS UDP of output, assemble audio/video/text together
-- Web search context injection
+DONE - Web search context injection
 - VectorDB Context injection
 - News Context injection
 - Background Audio music per scene, intro to episode...

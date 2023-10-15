@@ -13,3 +13,4 @@ gpt4all
 chromadb
 langchainhub
 langchain
+bs4

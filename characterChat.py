@@ -24,16 +24,34 @@ import os
 import queue
 import subprocess
 from langchain.document_loaders import WebBaseLoader
+from langchain.document_loaders.recursive_url_loader import RecursiveUrlLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain.embeddings import GPT4AllEmbeddings
+from bs4 import BeautifulSoup as Soup
 import warnings
 warnings.simplefilter(action='ignore', category=Warning)
 from transformers import logging
 logging.set_verbosity_error()
 import logging as logger
 logger.basicConfig(level=logger.ERROR)
+import re
 
+def extract_urls(text):
+    """
+    Extracts all URLs that start with 'http' or 'https' from a given text.
+
+    Parameters:
+        text (str): The text from which URLs are to be extracted.
+
+    Returns:
+        list: A list of extracted URLs.
+    """
+    url_regex = re.compile(
+        r'http[s]?://'  # http:// or https://
+        r'(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'  # domain
+    )
+    return re.findall(url_regex, text)
 
 def gethttp(url, question):
     if url == "" or url == None:
@@ -43,14 +61,21 @@ def gethttp(url, question):
         print("Question is empty for gethttp()")
         return []
     try:
-        loader = WebBaseLoader(url, requests_kwargs={'verify': False})
+        #loader = WebBaseLoader(url, requests_kwargs={'verify': False})
+        loader = RecursiveUrlLoader(url=url, max_depth=3, extractor=lambda x: Soup(x, "html.parser").text)
     except Exception as e:
         print("Error with url {url} gethttp WebBaseLoader:", e)
-    data = loader.load()
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
-    all_splits = text_splitter.split_documents(data)
-    vectorstore = Chroma.from_documents(documents=all_splits, embedding=GPT4AllEmbeddings())
-    docs = vectorstore.similarity_search(question)
+        return []
+
+    docs = []
+    try:
+        data = loader.load() # Overlap chunks for better context
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+        all_splits = text_splitter.split_documents(data)
+        vectorstore = Chroma.from_documents(documents=all_splits, embedding=GPT4AllEmbeddings())
+        docs = vectorstore.similarity_search(question)
+    except Exception as e:
+        print("Error with {url} text splitting in gethttp():", e)
     return docs
 
 def uromanize(input_string, uroman_path):
@@ -398,7 +423,21 @@ if __name__ == "__main__":
             print("and press the Return key to continue, or Ctrl+C to exit the program.\n")
 
             next_question = get_user_input()
-            prompt = "You are %s who is %s\n%s%s" % (
+            urls = extract_urls(next_question)
+            context = "Context:\n"
+            try:
+                for url in urls:
+                    docs = gethttp(url, next_question)
+                    if args.debug:
+                        print("--- GetHTTP found {url} with %d docs" % len(docs))
+                    if len(docs) > 0:
+                        parsed_output = parse_documents(docs)
+                        context = "%s\n%s\n" % (context, parsed_output.strip())
+            except Exception as e:
+                print("Error with url retrieval:", e)
+
+            prompt = "%sUse the above Context if any exists to help form the output. You are %s who is %s Using the Context as inspiration and references.\n%s%s" % (
+                    context,
                     args.ainame,
                     args.aipersonality,
                     args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
