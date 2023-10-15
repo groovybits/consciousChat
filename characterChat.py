@@ -74,6 +74,7 @@ default_human_name = "Human"
 parser = argparse.ArgumentParser()
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf")
 parser.add_argument("-ag", "--autogenerate", type=bool, default=False)
+parser.add_argument("-sonl", "--stoponnewline", type=bool, default=False)
 parser.add_argument("-q", "--question", type=str, default="How has your day been")
 parser.add_argument("-un", "--username", type=str, default=default_human_name)
 parser.add_argument("-up", "--userpersonality", type=str, default="I am a magical girl from an anime that is here to talk to other magical girls")
@@ -110,6 +111,41 @@ llm = Llama(model_path=args.model, n_ctx=32768, verbose=DEBUG)
 def get_user_input():
     return input("Question: ")
 
+def speak_line(line):
+    if not line:
+        return
+    if DEBUG:
+        print("Speaking line: %s\n" % line)
+
+    aitext = convert_numbers_to_words(line)
+    aiinputs = aitokenizer(aitext, return_tensors="pt")
+    aiinputs['input_ids'] = aiinputs['input_ids'].long()
+
+    with torch.no_grad():
+        aioutput = aimodel(**aiinputs).waveform
+
+    waveform_np = aioutput.squeeze().numpy().T
+    buf = io.BytesIO()
+    sf.write(buf, waveform_np, ai_sampling_rate, format='WAV')
+    buf.seek(0)
+
+    wave_obj = wave.open(buf)
+    p = pyaudio.PyAudio()
+    stream = p.open(format=p.get_format_from_width(wave_obj.getsampwidth()),
+                    channels=wave_obj.getnchannels(),
+                    rate=wave_obj.getframerate(),
+                    output=True)
+
+    while True:
+        data = wave_obj.readframes(1024)
+        if not data:
+            break
+        stream.write(data)
+
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
+
 def converse(question):
     output = llm(
         "I am %s: %s \n\nYourname is %s: %s\n\nQuestion: %s\n\nAnswer:" % (
@@ -125,48 +161,14 @@ def converse(question):
         echo=False
     )
 
-    def speak_line(line):
-        if not line:
-            return
-        if DEBUG:
-            print("Speaking line: %s\n" % line)
 
-        aitext = convert_numbers_to_words(line)
-        aiinputs = aitokenizer(aitext, return_tensors="pt")
-        aiinputs['input_ids'] = aiinputs['input_ids'].long()
-
-        with torch.no_grad():
-            aioutput = aimodel(**aiinputs).waveform
-
-        waveform_np = aioutput.squeeze().numpy().T
-        buf = io.BytesIO()
-        sf.write(buf, waveform_np, ai_sampling_rate, format='WAV')
-        buf.seek(0)
-
-        wave_obj = wave.open(buf)
-        p = pyaudio.PyAudio()
-        stream = p.open(format=p.get_format_from_width(wave_obj.getsampwidth()),
-                        channels=wave_obj.getnchannels(),
-                        rate=wave_obj.getframerate(),
-                        output=True)
-
-        while True:
-            data = wave_obj.readframes(1024)
-            if not data:
-                break
-            stream.write(data)
-
-        stream.stop_stream()
-        stream.close()
-        p.terminate()
-
-
-    ## Question
-    print("Question: %s\n" % question)
-    question_spoken = clean_text_for_tts(question)
-    speak_line(question_spoken)
 
     tokens = []
+    speaktokens = []
+    if args.stoponnewline:
+        speaktokens.extend(['\n'])
+    else:
+        speaktokens.extend([' ', '\n', '.'])
 
     token_count = 0
     tokens_to_speak = 0
@@ -182,7 +184,7 @@ def converse(question):
                 tokens_to_speak += 1
                 print("%s" % sub_token, end='', flush=True)
 
-                if (tokens_to_speak > args.tokenstospeak) and (sub_token[len(sub_token)-1] in [' ', '\n', '.']):
+                if (tokens_to_speak > args.tokenstospeak) and (sub_token[len(sub_token)-1] in speaktokens):
                     line = ''.join(tokens)
                     tokens_to_speak = 0
                     if line.strip():  # check if line is not empty
@@ -198,6 +200,12 @@ def converse(question):
 
 if __name__ == "__main__":
     initial_question = args.question
+
+    ## Question
+    print("Question: %s\n" % initial_question)
+    question_spoken = clean_text_for_tts(initial_question)
+    speak_line(question_spoken)
+
     converse(initial_question)
 
     while True:
