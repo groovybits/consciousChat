@@ -34,6 +34,8 @@ This project is licensed under the Apache License.
     - Research paper: https://arxiv.org/abs/2106.06103
 - LLM: [TheBloke/zephyr-7B-alpha-GGUF](https://huggingface.co/TheBloke/zephyr-7B-alpha-GGUF)
     - More information: https://news.ycombinator.com/item?id=37842618
+- Summarization:
+    - https://huggingface.co/kunaltilaganji/Abstractive-Summarization-with-Transformers
 
 ## Setup and Usage
 

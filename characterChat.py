@@ -57,7 +57,7 @@ def summarize_documents(documents):
         title = doc.metadata.get('title', 'N/A')
 
         # Summarize page content
-        summary = summarizer(doc.page_content, max_length=600, min_length=50, do_sample=False)
+        summary = summarizer(doc.page_content, max_length=200, min_length=20, do_sample=False)
         summarized_content = summary[0]['summary_text'].strip()
 
         # Format the extracted and summarized data
@@ -83,7 +83,7 @@ def parse_documents(documents):
         # Extract metadata and page content
         source = doc.metadata.get('source', 'N/A')
         title = doc.metadata.get('title', 'N/A')
-        page_content = doc.page_content[:600]  # Get up to N characters
+        page_content = doc.page_content[:200]  # Get up to N characters
 
         # Format the extracted data
         formatted_data = f"Main Source: {source}\nTitle: {title}\nDocument Page Content: {page_content}\n"
@@ -253,6 +253,7 @@ parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: 
 parser.add_argument("-re", "--roleenforcer",
                     type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}, give your thoughts and opinions as asked.\n",
                     help="Role enforcer statement with {user} and {assistant} template names replaced by the actual ones in use.")
+parser.add_argument("-sd", "--summarizedocs", type=bool, default=False, help="Summarize the documents retrieved with a summarization model, takes a lot of resources")
 args = parser.parse_args()
 
 if args.ttsseed > 0:
@@ -494,7 +495,10 @@ if __name__ == "__main__":
                     if args.debug:
                         print("--- GetHTTP found {url} with %d docs" % len(docs))
                     if len(docs) > 0:
-                        parsed_output = summarize_documents(docs) # parse_documents gets more information with less precision
+                        if args.summarizedocs:
+                            parsed_output = summarize_documents(docs) # parse_documents gets more information with less precision
+                        else:
+                            parsed_output = parse_documents(docs)
                         context = "%s\n%s\n\n" % (context, parsed_output.strip())
             except Exception as e:
                 print("Error with url retrieval:", e)
