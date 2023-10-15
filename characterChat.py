@@ -30,6 +30,7 @@ import wave
 import queue
 import warnings
 import logging as logger
+import sqlite3
 
 ## Quiet operation, no warnings
 logger.basicConfig(level=logger.ERROR)
@@ -52,7 +53,7 @@ def summarize_documents(documents):
         title = doc.metadata.get('title', 'N/A')
 
         # Summarize page content
-        summary = summarizer(doc.page_content, max_length=200, min_length=20, do_sample=False)
+        summary = summarizer(doc.page_content, max_length=200, min_length=20, do_sample=True)
         summarized_content = summary[0]['summary_text'].strip()
 
         # Format the extracted and summarized data
@@ -106,15 +107,42 @@ def extract_urls(text):
 
 def gethttp(url, question, llama_embeddings, persistdirectory):
     if url == "" or url == None:
-        print("URL is empty for gethttp()")
+        print("--- Error: URL is empty for gethttp()")
         return []
     if question == "":
-        print("Question is empty for gethttp()")
+        print("--- Error: Question is empty for gethttp()")
         return []
+
+    ## Connect to DB to check if this url has already been ingested
+    db_conn = sqlite3.connect(args.urlsdb)
+    db_conn.execute('''CREATE TABLE IF NOT EXISTS urls (url TEXT PRIMARY KEY NOT NULL);''')
+
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT url FROM urls WHERE url = ?", (url,))
+    dbdata = cursor.fetchone()
+
+    ## Check if we have already ingested this url into the vector DB
+    if dbdata is not None:
+        print(f"\n--- URL {url} has already been processed.")
+        db_conn.close()
+        try:
+            vectorstore = Chroma.from_directory(persistdirectory)
+            docs = vectorstore.similarity_search(question) ## Vector DB Search
+            db_conn.close() ## Close DB
+            return docs; 
+        except Exception as e:
+            print("\n--- Error: looking up embeddings for {url}:", e)
+    else:
+        if args.debug:
+            print(f"\n--- URL {url} has not been seen, ingesting into vector db...")
+
+    ## Close SQL Light DB Connection
+    db_conn.close()
+
     try:
         loader = RecursiveUrlLoader(url=url, max_depth=2, extractor=lambda x: Soup(x, "html.parser").text)
     except Exception as e:
-        print("Error with url {url} gethttp WebBaseLoader:", e)
+        print("\n--- Error: with url {url} gethttp WebBaseLoader:", e)
         return []
 
     docs = []
@@ -122,12 +150,22 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
         warnings.simplefilter("ignore")
         try:
             data = loader.load() # Overlap chunks for better context
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=25)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=250, chunk_overlap=25)
             all_splits = text_splitter.split_documents(data)
             vectorstore = Chroma.from_documents(documents=all_splits, embedding=llama_embeddings, persist_directory=persistdirectory)
             docs = vectorstore.similarity_search(question)
         except Exception as e:
-            print("Error with {url} text splitting in gethttp():", e)
+            print("\n--- Error with {url} text splitting in gethttp():", e)
+
+    ## Only save if we found something
+    if len(docs) > 0:
+        db_conn = sqlite3.connect(args.urlsdb)
+        ## Save url into db
+        db_conn.execute("INSERT INTO urls (url) VALUES (?)", (url,))
+        db_conn.commit()
+        ## Close SQL Light DB Connection
+        db_conn.close()
+
     return docs
 
 def uromanize(input_string, uroman_path):
@@ -143,7 +181,7 @@ def uromanize(input_string, uroman_path):
     stdout, stderr = process.communicate(input=input_string.encode())
 
     if process.returncode != 0:
-        raise ValueError(f"Error {process.returncode}: {stderr.decode()}")
+        raise ValueError(f"--- Error {process.returncode}: {stderr.decode()}")
 
     # Return the output as a string and skip the new-line character at the end
     return stdout.decode()[:-1]
@@ -191,31 +229,23 @@ def check_min(value):
 default_ai_name = "Buddha"
 default_human_name = "Human"
 
-default_model = "/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q2_K.gguf"
-default_embedding_model = "/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q2_K.gguf"
+default_model = "models/zephyr-7b-alpha.Q4_K_M.gguf"
+default_embedding_model = "models/mistral-7b-openorca.Q5_K_M.gguf"
 
-default_ai_personality = "a being of profound wisdom, compassion, and mindfulness. Your understanding of the interconnectedness of all life and the nature of suffering has led you to enlightenment. You recognize the impermanence of worldly desires and emphasize the importance of transcending them. Through the Eightfold Path, you guide others in ethical and mental development, aiming to free them from attachments and delusions. Your demeanor is calm, compassionate, and thoughtful, always seeking to alleviate suffering and bring others to a state of inner peace. Your words are gentle yet profound, leading followers towards self-realization and harmony with the universe. In all your actions and teachings, you exemplify a life of balance, empathy, and profound spiritual insight.  Speak in a conversational tone referencing yourself and the person who asked the question if given.  Maintain your role without revealing that you're an AI Language model or your inability to access real-time information. Do not mention the text or sources used, treat the context as something you are using as internal thought to generate responses as your role."
+default_ai_personality = "You are the wise Buddha"
 
 default_user_personality = "a seeker of wisdom who is human and looking for answers and possibly entertainment."
 
 facebook_model = "facebook/mms-tts-eng"
-
-## AI TTS Model for Speech
-aimodel = VitsModel.from_pretrained(facebook_model)
-aitokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)
-
-## User TTS Model for Speech
-usermodel = VitsModel.from_pretrained(facebook_model)
-usertokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-l", "--language", type=str, default="", help="Have output use another language than the default English for text and speech. See the -ro option and uroman.pl program needed.")
 parser.add_argument("-pd", "--persistdirectory", type=str, default="vectordb_data",
                     help="Persist directory for Chroma Vector DB used for web page lookups and document analysis.")
 parser.add_argument("-m", "--model", type=str, default=default_model,
-                    help="File path to model to load and use.")
+                    help="File path to model to load and use. Default is %s" % default_model)
 parser.add_argument("-em", "--embeddingmodel", type=str, default=default_embedding_model,
-                    help="File path to embedding model to load and use. Use a small simple one to keep it fast.")
+                    help="File path to embedding model to load and use. Use a small simple one to keep it fast. Default is %s" % default_embedding_model)
 parser.add_argument("-ag", "--autogenerate", type=bool, default=False, help="Keep autogenerating the conversation without interactive prompting.")
 parser.add_argument("-ss", "--streamspeak", type=bool, default=False, help="Speak the text as tts token count chunks.")
 parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=50, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
@@ -232,15 +262,15 @@ parser.add_argument("-an", "--ainame", type=str, default=default_ai_name, help="
 parser.add_argument("-asr", "--aispeakingrate", type=float, default=1.0, help="AI speaking rate of TTS speaking.")
 parser.add_argument("-ans", "--ainoisescale", type=float, default=0.667, help="AI noisescale for TTS speaking.")
 parser.add_argument("-apr", "--aisamplingrate", type=int,
-                    default=aimodel.config.sampling_rate, help="AI sampling rate of TTS speaking, do not change from 16000!")
+                    default=16000, help="AI sampling rate of TTS speaking, do not change from 16000!")
 parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8, help="User speaking rate for TTS.")
 parser.add_argument("-uns", "--usernoisescale", type=float, default=0.667, help="User noisescale for TTS speaking.")
-parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate,
+parser.add_argument("-upr", "--usersamplingrate", type=int, default=16000,
                     help="User sampling rate of TTS speaking, do not change from 16000!")
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
                     help="Stop tokens to use, do not change unless you know what you are doing!")
 parser.add_argument("-ctx", "--context", type=int, default=32768, help="Model context, default 32768.")
-parser.add_argument("-ectx", "--embeddingscontext", type=int, default=4096, help="Embedding Model context, default 4096.")
+parser.add_argument("-ectx", "--embeddingscontext", type=int, default=256, help="Embedding Model context, default 256.")
 parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
 parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
 parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Temperature to set LLM Model.")
@@ -255,6 +285,8 @@ parser.add_argument("-re", "--roleenforcer",
                     type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}, give your thoughts and opinions as asked.\n",
                     help="Role enforcer statement with {user} and {assistant} template names replaced by the actual ones in use.")
 parser.add_argument("-sd", "--summarizedocs", type=bool, default=False, help="Summarize the documents retrieved with a summarization model, takes a lot of resources")
+parser.add_argument("-udb", "--urlsdb", type=str, default="db/processed_urls.db", help="SQL Light DB file location")
+
 args = parser.parse_args()
 
 if args.ttsseed > 0:
@@ -276,24 +308,43 @@ if args.episode:
 if args.language != "":
     args.promptcompletion = "%s Speak in the %s language" % (args.promptcompletion, args.language)
 
+## AI TTS Model for Speech
+aimodel = None
 ai_speaking_rate = args.aispeakingrate
 ai_noise_scale = args.ainoisescale
-ai_sampling_rate = args.aisamplingrate
-aimodel.speaking_rate = ai_speaking_rate
-aimodel.noise_scale = ai_noise_scale
 
+usermodel = None
 user_speaking_rate = args.userspeakingrate
 user_noise_scale = args.usernoisescale
-user_sampling_rate = args.usersamplingrate
-usermodel.speaking_rate = user_speaking_rate
-usermodel.noise_scale = user_noise_scale
 
-## LLM Model for Text
-llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
-llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel, n_ctx=args.embeddingscontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+if not args.silent:
+    aimodel = VitsModel.from_pretrained(facebook_model)
+    aitokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)
+    aimodel.speaking_rate = ai_speaking_rate
+    aimodel.noise_scale = ai_noise_scale
 
-# Initialize summarization pipeline
-summarizer = pipeline("summarization")
+    if (args.aisamplingrate == aimodel.config.sampling_rate):
+        ai_sampling_rate = args.aisamplingrate
+    else:
+        print("\n--- Error ai samplingrate is not matching the models of %d" % aimodel.sampling_rate)
+
+    ## User TTS Model for Speech
+    usermodel = VitsModel.from_pretrained(facebook_model)
+    usertokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)
+    usermodel.speaking_rate = user_speaking_rate
+    usermodel.noise_scale = user_noise_scale
+
+    if (args.usersamplingrate == usermodel.config.sampling_rate):
+        user_sampling_rate = args.usersamplingrate
+    else:
+        print("\n--- Error user samplingrate is not matching the models of %d" % usermodel.sampling_rate)
+
+## LLM Model for Text TODO are setting gpu layers good/necessary?
+#llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug)
+
+## Text embeddings, enable only if needed
+llama_embeddings = None
 
 ## Human User prompt
 def get_user_input():
@@ -496,6 +547,18 @@ if __name__ == "__main__":
             context = "Context:\n"
             try:
                 for url in urls:
+                    ## LLM Model for Text Embeddings from Documents and Websites etc...
+                    #llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
+                    #   n_ctx=args.embeddingscontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+                    if llama_embeddings == None:
+                        llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
+                                                              n_ctx=args.embeddingscontext, verbose=args.doubledebug)
+
+                    # Initialize summarization pipeline for summarizing Documents retrieved
+                    summarizer = None
+                    if args.summarizedocs:
+                        summarizer = pipeline("summarization")
+
                     docs = gethttp(url, next_question, llama_embeddings, args.persistdirectory)
                     if args.debug:
                         print("--- GetHTTP found {url} with %d docs" % len(docs))
