@@ -185,26 +185,41 @@ def speak_line(line):
     if args.debug:
         print("\n--- Speaking line with TTS...\n")
 
+    ## Numbers to Words
     aitext = convert_numbers_to_words(line)
+    ## Romanize
+    romanized_aitext = ""
     try:
         uroman_path = ""
         if "UROMAN" in os.environ:
             uroman_path = os.environ["UROMAN"]
         if args.romanize:
-            aitext = uromanize(aitext, uroman_path=uroman_path)
+            romanized_aitext = uromanize(aitext, uroman_path=uroman_path)
+        if args.debug:
+            print("\n--- Romanized Text: %s" % romanized_aitext)
+        aitext = romanized_aitext
     except Exception as e:
-        print("\n--- Error romanizing input: %s" % e)
+        print("\n--- Error romanizing input:", e)
+
+    ## Tokenize
     aiinputs = aitokenizer(aitext, return_tensors="pt")
     aiinputs['input_ids'] = aiinputs['input_ids'].long()
 
-    with torch.no_grad():
-        aioutput = aimodel(**aiinputs).waveform
+    ## Run TTS Model
+    try:
+        with torch.no_grad():
+            aioutput = aimodel(**aiinputs).waveform
+    except Exception as e:
+        print("\n--- Error with TTS AI Speech model!", e)
+        return
 
+    ## Buffer audio speech output as WAV
     waveform_np = aioutput.squeeze().numpy().T
     buf = io.BytesIO()
     sf.write(buf, waveform_np, ai_sampling_rate, format='WAV')
     buf.seek(0)
 
+    ## Speak TTS Output
     wave_obj = wave.open(buf)
     p = pyaudio.PyAudio()
     stream = p.open(format=p.get_format_from_width(wave_obj.getsampwidth()),
@@ -212,12 +227,14 @@ def speak_line(line):
                     rate=wave_obj.getframerate(),
                     output=True)
 
+    ## Read and Speak
     while True:
         data = wave_obj.readframes(1024)
         if not data:
             break
         stream.write(data)
 
+    ## Stop and cleanup speaking TODO keep this open
     stream.stop_stream()
     stream.close()
     p.terminate()
@@ -287,7 +304,10 @@ def converse(question, messages):
         line = ''.join(tokens)
         if line.strip():  # check if line is not empty
             spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
-            speak_line(spoken_line.strip())
+            try:
+                speak_line(spoken_line.strip())
+            except Exception as e:
+                print("\n--- Error speaking line!!!:", e)
 
     return ''.join(tokens).strip()
 
