@@ -73,6 +73,7 @@ default_human_name = "Human"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf")
+parser.add_argument("-ag", "--autogenerate", type=bool, default=False)
 parser.add_argument("-q", "--question", type=str, default="How has your day been")
 parser.add_argument("-un", "--username", type=str, default=default_human_name)
 parser.add_argument("-up", "--userpersonality", type=str, default="I am a magical girl from an anime that is here to talk to other magical girls")
@@ -85,9 +86,12 @@ parser.add_argument("-apr", "--aisamplingrate", type=int, default=aimodel.config
 parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8)
 parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0)
 parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.config.sampling_rate)
-parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=4)
+parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=12)
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Answer:,%s" % (default_human_name, default_ai_name))
 args = parser.parse_args()
+
+if args.autogenerate:
+    args.stoptokens = ""
 
 ai_speaking_rate = args.aispeakingrate
 ai_noise_scale = args.ainoisescale
@@ -104,21 +108,20 @@ usermodel.noise_scale = user_noise_scale
 llm = Llama(model_path=args.model, n_ctx=32768, verbose=DEBUG)
 
 def get_user_input():
-    return input("You: ")
+    return input("Question: ")
 
 def converse(question):
     output = llm(
-        "I am %s: %s \n\nYourname is %s: %s\n\nQuestion from %s: %s\n\nAnswer:" % (
+        "I am %s: %s \n\nYourname is %s: %s\n\nQuestion: %s\n\nAnswer:" % (
             args.username,
             args.userpersonality,
             args.ainame,
             args.aipersonality,
-            args.username,
             question),
         max_tokens=0,
         temperature=0.8,
         stream=True,
-        stop=args.stoptokens.split(','),
+        stop=args.stoptokens.split(',') if args.stoptokens else [],  # use split() result if stoptokens is not empty
         echo=False
     )
 
@@ -159,8 +162,8 @@ def converse(question):
 
 
     ## Question
-    print("Question: %s\n" % args.question)
-    question_spoken = clean_text_for_tts(args.question)
+    print("Question: %s\n" % question)
+    question_spoken = clean_text_for_tts(question)
     speak_line(question_spoken)
 
     tokens = []
@@ -176,10 +179,12 @@ def converse(question):
             if sub_token:  # check if sub_token is not empty
                 tokens.append(sub_token)
                 token_count += 1
+                tokens_to_speak += 1
                 print("%s" % sub_token, end='', flush=True)
 
-                if (token_count % args.tokenstospeak == 0) and (sub_token[len(sub_token)-1] in [' ', '\n', '.']):
+                if (tokens_to_speak > args.tokenstospeak) and (sub_token[len(sub_token)-1] in [' ', '\n', '.']):
                     line = ''.join(tokens)
+                    tokens_to_speak = 0
                     if line.strip():  # check if line is not empty
                         line = clean_text_for_tts(line)  # clean up the text for TTS
                         speak_line(line.strip())
