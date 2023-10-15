@@ -64,7 +64,8 @@ def clean_text_for_tts(text):
 
     # Strip out non-speaking characters
     """
-    text = re.sub(r'[^a-zA-Z0-9 .,?!]', '', text)
+    if args.language == "":
+        text = re.sub(r'[^a-zA-Z0-9 .,?!]', '', text)
     """
 
     # Add a pause after punctuation
@@ -195,9 +196,9 @@ def speak_line(line):
             uroman_path = os.environ["UROMAN"]
         if args.romanize:
             romanized_aitext = uromanize(aitext, uroman_path=uroman_path)
-        if args.debug:
-            print("\n--- Romanized Text: %s" % romanized_aitext)
-        aitext = romanized_aitext
+            aitext = romanized_aitext
+            if args.debug:
+                print("\n--- Romanized Text: %s" % romanized_aitext)
     except Exception as e:
         print("\n--- Error romanizing input:", e)
 
