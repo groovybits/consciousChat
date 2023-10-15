@@ -90,6 +90,8 @@ parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.co
 parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=12)
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Answer:,%s" % (default_human_name, default_ai_name))
 parser.add_argument("-ctx", "--context", type=int, default=32768)
+parser.add_argument("-mt", "--maxtokens", type=int, default=0)
+parser.add_argument("-t", "--temperature", type=float, default=0.9)
 args = parser.parse_args()
 
 if args.autogenerate:
@@ -158,8 +160,8 @@ def converse(question):
             args.ainame,
             args.aipersonality,
             question),
-        max_tokens=0,
-        temperature=0.8,
+        max_tokens=args.maxtokens,
+        temperature=args.temperature,
         stream=True,
         stop=args.stoptokens.split(',') if args.stoptokens else [],  # use split() result if stoptokens is not empty
         echo=False
