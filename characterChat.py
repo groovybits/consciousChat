@@ -31,6 +31,7 @@ import queue
 import warnings
 import logging as logger
 import sqlite3
+from urllib.parse import urlparse
 
 ## Quiet operation, no warnings
 logger.basicConfig(level=logger.ERROR)
@@ -53,7 +54,7 @@ def summarize_documents(documents):
         title = doc.metadata.get('title', 'N/A')
 
         # Summarize page content
-        summary = summarizer(doc.page_content, max_length=200, min_length=20, do_sample=True)
+        summary = summarizer(doc.page_content, max_length=200, min_length=20, do_sample=False)
         summarized_content = summary[0]['summary_text'].strip()
 
         # Format the extracted and summarized data
@@ -113,6 +114,22 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
         print("--- Error: Question is empty for gethttp()")
         return []
 
+    # Parse the URL to get a safe directory name
+    parsed_url = urlparse(url)
+    url_directory = parsed_url.netloc.replace('.', '_')
+    url_directory = os.path.join(persistdirectory, url_directory)
+
+    if args.debug:
+        print("gethttp() parsed URL {url}:", parsed_url)
+
+    # Create the directory if it does not exist
+    if not os.path.exists(url_directory):
+        try:
+            os.makedirs(url_directory)
+        except:
+            print("\n--- Error trying to create directory {url_directory}")
+            return []
+
     ## Connect to DB to check if this url has already been ingested
     db_conn = sqlite3.connect(args.urlsdb)
     db_conn.execute('''CREATE TABLE IF NOT EXISTS urls (url TEXT PRIMARY KEY NOT NULL);''')
@@ -126,12 +143,14 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
         print(f"\n--- URL {url} has already been processed.")
         db_conn.close()
         try:
-            vectorstore = Chroma.from_directory(persistdirectory)
+            vectorstore = Chroma.from_directory(url_directory)
             docs = vectorstore.similarity_search(question) ## Vector DB Search
             db_conn.close() ## Close DB
-            return docs; 
+            if args.debug:
+                print("--- gethttp() Found vector embeddings for {url}, returning them...", docs)
+            return docs;
         except Exception as e:
-            print("\n--- Error: looking up embeddings for {url}:", e)
+            print("\n--- Error: Looking up embeddings for {url}:", e)
     else:
         if args.debug:
             print(f"\n--- URL {url} has not been seen, ingesting into vector db...")
@@ -142,7 +161,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
     try:
         loader = RecursiveUrlLoader(url=url, max_depth=2, extractor=lambda x: Soup(x, "html.parser").text)
     except Exception as e:
-        print("\n--- Error: with url {url} gethttp WebBaseLoader:", e)
+        print("\n--- Error: with url {url} gethttp Url Loader:", e)
         return []
 
     docs = []
@@ -152,7 +171,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
             data = loader.load() # Overlap chunks for better context
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=250, chunk_overlap=25)
             all_splits = text_splitter.split_documents(data)
-            vectorstore = Chroma.from_documents(documents=all_splits, embedding=llama_embeddings, persist_directory=persistdirectory)
+            vectorstore = Chroma.from_documents(documents=all_splits, embedding=llama_embeddings, persist_directory=url_directory)
             docs = vectorstore.similarity_search(question)
         except Exception as e:
             print("\n--- Error with {url} text splitting in gethttp():", e)
@@ -229,8 +248,8 @@ def check_min(value):
 default_ai_name = "Buddha"
 default_human_name = "Human"
 
-default_model = "models/zephyr-7b-alpha.Q4_K_M.gguf"
-default_embedding_model = "models/mistral-7b-openorca.Q5_K_M.gguf"
+default_model = "models/zephyr-7b-alpha.Q2_K.gguf"
+default_embedding_model = "models/zephyr-7b-alpha.Q2_K.gguf"
 
 default_ai_personality = "You are the wise Buddha"
 
@@ -270,7 +289,7 @@ parser.add_argument("-upr", "--usersamplingrate", type=int, default=16000,
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
                     help="Stop tokens to use, do not change unless you know what you are doing!")
 parser.add_argument("-ctx", "--context", type=int, default=32768, help="Model context, default 32768.")
-parser.add_argument("-ectx", "--embeddingscontext", type=int, default=256, help="Embedding Model context, default 256.")
+parser.add_argument("-ectx", "--embeddingscontext", type=int, default=512, help="Embedding Model context, default 512.")
 parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
 parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
 parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Temperature to set LLM Model.")
@@ -544,9 +563,17 @@ if __name__ == "__main__":
 
             next_question = get_user_input()
             urls = extract_urls(next_question)
-            context = "Context:\n"
+            context = ""
+            if len(urls) > 0:
+                context = "Context:\n"
+            else:
+                if args.debug:
+                    print("--- Found no URLs in prompt")
+
             try:
                 for url in urls:
+                    if args.debug:
+                        print("\n--- Found URL {url} in prompt input.")
                     ## LLM Model for Text Embeddings from Documents and Websites etc...
                     #llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
                     #   n_ctx=args.embeddingscontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)

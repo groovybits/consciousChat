@@ -13,4 +13,3 @@ chromadb
 langchainhub
 langchain
 bs4
-sqlite3
