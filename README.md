@@ -38,6 +38,7 @@ This project is licensed under the Apache License.
     - https://huggingface.co/kunaltilaganji/Abstractive-Summarization-with-Transformers
 - Embeddings: LLama.cpp is slow
     - https://huggingface.co/Aryanne/OpenLlama-Platypus-3B-gguf
+    - https://platypus-llm.github.io/
 
 ## Setup and Usage
 
