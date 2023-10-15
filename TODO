@@ -11,3 +11,11 @@
 - Allow twitch chat input by chat room users
 - Allow twitch chat users to create a bot for themselves
 - Control of conversation from outside like sims
+- Video stream MpegTS UDP of output, assemble audio/video/text together
+- Web search context injection
+- VectorDB Context injection
+- News Context injection
+- Background Audio music per scene, intro to episode...
+- Shared publishing of video to social media and youtube
+- API serving, possibly multiple modules that work together?
+- web socket control and communication between threads? or python queues
