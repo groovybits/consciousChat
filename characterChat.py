@@ -69,7 +69,7 @@ def check_min(value):
     return ivalue
 
 default_ai_name = "Usagi"
-default_human_name = "Anime Fan"
+default_human_name = "AnimeFan"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf",
