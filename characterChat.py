@@ -23,11 +23,10 @@ import wave
 import os
 import queue
 import subprocess
-from langchain.document_loaders import WebBaseLoader
 from langchain.document_loaders.recursive_url_loader import RecursiveUrlLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
-from langchain.embeddings import GPT4AllEmbeddings
+from langchain.embeddings import LlamaCppEmbeddings
 from bs4 import BeautifulSoup as Soup
 import warnings
 warnings.simplefilter(action='ignore', category=Warning)
@@ -36,6 +35,63 @@ logging.set_verbosity_error()
 import logging as logger
 logger.basicConfig(level=logger.ERROR)
 import re
+from transformers import pipeline
+
+# Initialize summarization pipeline
+summarizer = pipeline("summarization")
+
+
+def summarize_documents(documents):
+    """
+    Summarizes the page content of a list of Document objects.
+
+    Parameters:
+        documents (list): A list of Document objects.
+
+    Returns:
+        str: Formatted string containing document details with summarized content.
+    """
+    output = []
+    for doc in documents:
+        source = doc.metadata.get('source', 'N/A')
+        title = doc.metadata.get('title', 'N/A')
+
+        # Summarize page content
+        summary = summarizer(doc.page_content, max_length=600, min_length=50, do_sample=False)
+        summarized_content = summary[0]['summary_text'].strip()
+
+        # Format the extracted and summarized data
+        formatted_data = f"Main Source: {source}\nTitle: {title}\nSummarized Content: {summarized_content}\n"
+        output.append(formatted_data)
+
+    # Combine all formatted data
+    return "\n".join(output)
+
+
+def parse_documents(documents):
+    """
+    Parses a list of Document objects and formats the output.
+
+    Parameters:
+        documents (list): A list of Document objects.
+
+    Returns:
+        str: Formatted string containing document details.
+    """
+    output = []
+    for doc in documents:
+        # Extract metadata and page content
+        source = doc.metadata.get('source', 'N/A')
+        title = doc.metadata.get('title', 'N/A')
+        page_content = doc.page_content[:600]  # Get up to N characters
+
+        # Format the extracted data
+        formatted_data = f"Main Source: {source}\nTitle: {title}\nDocument Page Content: {page_content}\n"
+        output.append(formatted_data)
+
+    # Combine all formatted data
+    return "\n".join(output)
+
 
 def extract_urls(text):
     """
@@ -53,7 +109,7 @@ def extract_urls(text):
     )
     return re.findall(url_regex, text)
 
-def gethttp(url, question):
+def gethttp(url, question, llama_embeddings, persistdirectory):
     if url == "" or url == None:
         print("URL is empty for gethttp()")
         return []
@@ -61,21 +117,22 @@ def gethttp(url, question):
         print("Question is empty for gethttp()")
         return []
     try:
-        #loader = WebBaseLoader(url, requests_kwargs={'verify': False})
-        loader = RecursiveUrlLoader(url=url, max_depth=3, extractor=lambda x: Soup(x, "html.parser").text)
+        loader = RecursiveUrlLoader(url=url, max_depth=1, extractor=lambda x: Soup(x, "html.parser").text)
     except Exception as e:
         print("Error with url {url} gethttp WebBaseLoader:", e)
         return []
 
     docs = []
-    try:
-        data = loader.load() # Overlap chunks for better context
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-        all_splits = text_splitter.split_documents(data)
-        vectorstore = Chroma.from_documents(documents=all_splits, embedding=GPT4AllEmbeddings())
-        docs = vectorstore.similarity_search(question)
-    except Exception as e:
-        print("Error with {url} text splitting in gethttp():", e)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            data = loader.load() # Overlap chunks for better context
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+            all_splits = text_splitter.split_documents(data)
+            vectorstore = Chroma.from_documents(documents=all_splits, embedding=llama_embeddings, persist_directory=persistdirectory)
+            docs = vectorstore.similarity_search(question)
+        except Exception as e:
+            print("Error with {url} text splitting in gethttp():", e)
     return docs
 
 def uromanize(input_string, uroman_path):
@@ -152,8 +209,12 @@ usertokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, no
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-l", "--language", type=str, default="", help="Have output use another language than the default English for text and speech. See the -ro option and uroman.pl program needed.")
+parser.add_argument("-pd", "--persistdirectory", type=str, default="vectordb_data",
+                    help="Persist directory for Chroma Vector DB used for web page lookups and document analysis.")
 parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf",
                     help="File path to model to load and use.")
+parser.add_argument("-em", "--embeddingmodel", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q2_K.gguf",
+                    help="File path to embedding model to load and use. Use a small simple one to keep it fast.")
 parser.add_argument("-ag", "--autogenerate", type=bool, default=False, help="Keep autogenerating the conversation without interactive prompting.")
 parser.add_argument("-ss", "--streamspeak", type=bool, default=False, help="Speak the text as tts token count chunks.")
 parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=50, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
@@ -178,6 +239,7 @@ parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.co
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
                     help="Stop tokens to use, do not change unless you know what you are doing!")
 parser.add_argument("-ctx", "--context", type=int, default=32768, help="Model context, default 32768.")
+parser.add_argument("-ectx", "--embeddingscontext", type=int, default=1024, help="Embedding Model context, default 1024.")
 parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
 parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
 parser.add_argument("-t", "--temperature", type=float, default=0.9, help="Temperature to set LLM Model.")
@@ -225,6 +287,7 @@ usermodel.noise_scale = user_noise_scale
 
 ## LLM Model for Text
 llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel, n_ctx=args.embeddingscontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
 ## Human User prompt
 def get_user_input():
@@ -427,12 +490,12 @@ if __name__ == "__main__":
             context = "Context:\n"
             try:
                 for url in urls:
-                    docs = gethttp(url, next_question)
+                    docs = gethttp(url, next_question, llama_embeddings, args.persistdirectory)
                     if args.debug:
                         print("--- GetHTTP found {url} with %d docs" % len(docs))
                     if len(docs) > 0:
-                        parsed_output = parse_documents(docs)
-                        context = "%s\n%s\n" % (context, parsed_output.strip())
+                        parsed_output = summarize_documents(docs) # parse_documents gets more information with less precision
+                        context = "%s\n%s\n\n" % (context, parsed_output.strip())
             except Exception as e:
                 print("Error with url retrieval:", e)
 

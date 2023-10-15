@@ -23,6 +23,8 @@ This project is licensed under the Apache License.
 - **Stream Speak**: Streams the conversation per `tokenstospeak` value instead of speaking at new lines.
 - **Episode Mode**: Enables the output to follow a TV episode script format.
 - **Multi-Lingual**: Ability to speak in most languages on output text and voice (if uroman.pl is installed).
+- **Webpage Retrieval**: Ability to look up all URLs in prompt and load up the LLM context with the summary.
+
 
 ## Recommended Models
 

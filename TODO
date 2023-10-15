@@ -13,9 +13,10 @@
 - Control of conversation from outside like sims
 - Video stream MpegTS UDP of output, assemble audio/video/text together
 DONE - Web search context injection
-- VectorDB Context injection
+DONE - VectorDB Context injection
 - News Context injection
 - Background Audio music per scene, intro to episode...
 - Shared publishing of video to social media and youtube
 - API serving, possibly multiple modules that work together?
 - web socket control and communication between threads? or python queues
+- Timing metrics and Token usage information on prompt returns.
