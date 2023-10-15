@@ -23,6 +23,35 @@ import wave
 import os
 import queue
 import subprocess
+from langchain.document_loaders import WebBaseLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import Chroma
+from langchain.embeddings import GPT4AllEmbeddings
+import warnings
+warnings.simplefilter(action='ignore', category=Warning)
+from transformers import logging
+logging.set_verbosity_error()
+import logging as logger
+logger.basicConfig(level=logger.ERROR)
+
+
+def gethttp(url, question):
+    if url == "" or url == None:
+        print("URL is empty for gethttp()")
+        return []
+    if question == "":
+        print("Question is empty for gethttp()")
+        return []
+    try:
+        loader = WebBaseLoader(url, requests_kwargs={'verify': False})
+    except Exception as e:
+        print("Error with url {url} gethttp WebBaseLoader:", e)
+    data = loader.load()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
+    all_splits = text_splitter.split_documents(data)
+    vectorstore = Chroma.from_documents(documents=all_splits, embedding=GPT4AllEmbeddings())
+    docs = vectorstore.similarity_search(question)
+    return docs
 
 def uromanize(input_string, uroman_path):
     """Convert non-Roman strings to Roman using the `uroman` perl package."""

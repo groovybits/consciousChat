@@ -45,7 +45,19 @@ This project is licensed under the Apache License.
     - Use the "-ro True" option to romanize the TTS speaking text.
 
 ```bash
+# setup Python virtual environment
+pip install virtualenv
+python -m venv consciousChat
+source consciousChat/bin/activate
+
+# Install required dependency python3 packages
 pip install -r requirements.txt
+
+# Run program
+...
+
+# Stop env and clean it up
+deactivate
 ```
 
 ### Running the Chatbot
