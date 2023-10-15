@@ -4,42 +4,37 @@
 Chris Kennedy (C) 2023 The Groovy Organization
 Apache license
 
-Chatbot that speaks
+Chatbot that speaks, multi-lingual, looks up webpages and embeds them
+into a Chroma Vector DB. Read the TODO file
 """
 
-import json
 import argparse
-from transformers import VitsModel, AutoTokenizer, set_seed
-import torch
-import soundfile as sf
 import io
-import inflect
-import re
-from llama_cpp import Llama
-from llama_cpp import ChatCompletionMessage
-import sounddevice as sd
-import pyaudio
-import wave
 import os
-import queue
+import re
+import json
+import inflect
 import subprocess
+import torch
+from transformers import VitsModel, AutoTokenizer, pipeline, set_seed, logging
+from llama_cpp import Llama, ChatCompletionMessage
 from langchain.document_loaders.recursive_url_loader import RecursiveUrlLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain.embeddings import LlamaCppEmbeddings
 from bs4 import BeautifulSoup as Soup
+import sounddevice as sd
+import soundfile as sf
+import pyaudio
+import wave
+import queue
 import warnings
-warnings.simplefilter(action='ignore', category=Warning)
-from transformers import logging
-logging.set_verbosity_error()
 import logging as logger
+
+## Quiet operation, no warnings
 logger.basicConfig(level=logger.ERROR)
-import re
-from transformers import pipeline
-
-# Initialize summarization pipeline
-summarizer = pipeline("summarization")
-
+logging.set_verbosity_error()
+warnings.simplefilter(action='ignore', category=Warning)
 
 def summarize_documents(documents):
     """
@@ -83,7 +78,7 @@ def parse_documents(documents):
         # Extract metadata and page content
         source = doc.metadata.get('source', 'N/A')
         title = doc.metadata.get('title', 'N/A')
-        page_content = doc.page_content[:200]  # Get up to N characters
+        page_content = doc.page_content[:100]  # Get up to N characters
 
         # Format the extracted data
         formatted_data = f"Main Source: {source}\nTitle: {title}\nDocument Page Content: {page_content}\n"
@@ -117,7 +112,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
         print("Question is empty for gethttp()")
         return []
     try:
-        loader = RecursiveUrlLoader(url=url, max_depth=1, extractor=lambda x: Soup(x, "html.parser").text)
+        loader = RecursiveUrlLoader(url=url, max_depth=2, extractor=lambda x: Soup(x, "html.parser").text)
     except Exception as e:
         print("Error with url {url} gethttp WebBaseLoader:", e)
         return []
@@ -127,7 +122,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
         warnings.simplefilter("ignore")
         try:
             data = loader.load() # Overlap chunks for better context
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=100, chunk_overlap=25)
             all_splits = text_splitter.split_documents(data)
             vectorstore = Chroma.from_documents(documents=all_splits, embedding=llama_embeddings, persist_directory=persistdirectory)
             docs = vectorstore.similarity_search(question)
@@ -193,8 +188,15 @@ def check_min(value):
         raise argparse.ArgumentTypeError("%s is an invalid value for the number of tokens to speak! It should be 2 or more." % value)
     return ivalue
 
-default_ai_name = "Usagi"
-default_human_name = "AnimeFan"
+default_ai_name = "Buddha"
+default_human_name = "Human"
+
+default_model = "/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q2_K.gguf"
+default_embedding_model = "/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q2_K.gguf"
+
+default_ai_personality = "a being of profound wisdom, compassion, and mindfulness. Your understanding of the interconnectedness of all life and the nature of suffering has led you to enlightenment. You recognize the impermanence of worldly desires and emphasize the importance of transcending them. Through the Eightfold Path, you guide others in ethical and mental development, aiming to free them from attachments and delusions. Your demeanor is calm, compassionate, and thoughtful, always seeking to alleviate suffering and bring others to a state of inner peace. Your words are gentle yet profound, leading followers towards self-realization and harmony with the universe. In all your actions and teachings, you exemplify a life of balance, empathy, and profound spiritual insight.  Speak in a conversational tone referencing yourself and the person who asked the question if given.  Maintain your role without revealing that you're an AI Language model or your inability to access real-time information. Do not mention the text or sources used, treat the context as something you are using as internal thought to generate responses as your role."
+
+default_user_personality = "a seeker of wisdom who is human and looking for answers and possibly entertainment."
 
 facebook_model = "facebook/mms-tts-eng"
 
@@ -206,27 +208,26 @@ aitokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, norm
 usermodel = VitsModel.from_pretrained(facebook_model)
 usertokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)
 
-
 parser = argparse.ArgumentParser()
 parser.add_argument("-l", "--language", type=str, default="", help="Have output use another language than the default English for text and speech. See the -ro option and uroman.pl program needed.")
 parser.add_argument("-pd", "--persistdirectory", type=str, default="vectordb_data",
                     help="Persist directory for Chroma Vector DB used for web page lookups and document analysis.")
-parser.add_argument("-m", "--model", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q8_0.gguf",
+parser.add_argument("-m", "--model", type=str, default=default_model,
                     help="File path to model to load and use.")
-parser.add_argument("-em", "--embeddingmodel", type=str, default="/Volumes/BrahmaSSD/LLM/models/GGUF/zephyr-7b-alpha.Q2_K.gguf",
+parser.add_argument("-em", "--embeddingmodel", type=str, default=default_embedding_model,
                     help="File path to embedding model to load and use. Use a small simple one to keep it fast.")
 parser.add_argument("-ag", "--autogenerate", type=bool, default=False, help="Keep autogenerating the conversation without interactive prompting.")
 parser.add_argument("-ss", "--streamspeak", type=bool, default=False, help="Speak the text as tts token count chunks.")
 parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=50, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
-parser.add_argument("-ttss", "--ttsseed", type=int, default=1,
+parser.add_argument("-ttss", "--ttsseed", type=int, default=0,
                     help="TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow variance per line spoken.")
 parser.add_argument("-mtts", "--mintokenstospeak", type=check_min, default=12, help="Minimum number of tokens to generate before sending to TTS text to speech.")
 parser.add_argument("-q", "--question", type=str, default="", help="Question to ask initially, else you will be prompted.")
 parser.add_argument("-un", "--username", type=str, default=default_human_name, help="Your preferred name to use for your character.")
 parser.add_argument("-up", "--userpersonality", type=str,
-                    default="A magical girl from an anime that is here to talk to other magical girls", help="Your personality.")
+                    default=default_user_personality, help="Users (Your) personality.")
 parser.add_argument("-ap", "--aipersonality", type=str,
-                    default="A magical girl from an anime that is here to help however needed.", help="AI Personality.")
+                    default=default_ai_personality, help="AI (Chat Bot) Personality.")
 parser.add_argument("-an", "--ainame", type=str, default=default_ai_name, help="AI Character name to use.")
 parser.add_argument("-asr", "--aispeakingrate", type=float, default=1.0, help="AI speaking rate of TTS speaking.")
 parser.add_argument("-ans", "--ainoisescale", type=float, default=0.667, help="AI noisescale for TTS speaking.")
@@ -239,10 +240,10 @@ parser.add_argument("-upr", "--usersamplingrate", type=int, default=usermodel.co
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
                     help="Stop tokens to use, do not change unless you know what you are doing!")
 parser.add_argument("-ctx", "--context", type=int, default=32768, help="Model context, default 32768.")
-parser.add_argument("-ectx", "--embeddingscontext", type=int, default=1024, help="Embedding Model context, default 1024.")
+parser.add_argument("-ectx", "--embeddingscontext", type=int, default=4096, help="Embedding Model context, default 4096.")
 parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
 parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
-parser.add_argument("-t", "--temperature", type=float, default=0.9, help="Temperature to set LLM Model.")
+parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Temperature to set LLM Model.")
 parser.add_argument("-d", "--debug", type=bool, default=False, help="Debug in a verbose manner.")
 parser.add_argument("-dd", "--doubledebug", type=bool, default=False, help="Extra debugging output, very verbose.")
 parser.add_argument("-s", "--silent", type=bool, default=False, help="Silent mode, No TTS Speaking.")
@@ -270,6 +271,7 @@ if args.episode:
     args.roleenforcer.replace('Answer the question asked by', 'Create a story from the plotline given by')
     args.promptcompletion.replace('Answer:', 'Episode in Markdown Format:')
     args.promptcompletion.replace('Question', 'Plotline')
+    args.temperature = 0.8
 
 if args.language != "":
     args.promptcompletion = "%s Speak in the %s language" % (args.promptcompletion, args.language)
@@ -289,6 +291,9 @@ usermodel.noise_scale = user_noise_scale
 ## LLM Model for Text
 llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel, n_ctx=args.embeddingscontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+
+# Initialize summarization pipeline
+summarizer = pipeline("summarization")
 
 ## Human User prompt
 def get_user_input():
