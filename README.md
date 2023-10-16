@@ -81,7 +81,7 @@ source consciousChat/bin/activate
 pip install -r requirements.txt
 
 # Run program
-...
+./characterChat.py
 
 # Stop env and clean it up
 deactivate
