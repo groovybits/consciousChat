@@ -54,7 +54,7 @@ def summarize_documents(documents):
         title = doc.metadata.get('title', 'N/A')
 
         # Summarize page content
-        summary = summarizer(doc.page_content, max_length=1000, min_length=30, do_sample=False)
+        summary = summarizer(doc.page_content, max_length=args.embeddingdocsize, min_length=30, do_sample=False)
         summarized_content = summary[0]['summary_text'].strip()
 
         # Format the extracted and summarized data
@@ -80,7 +80,7 @@ def parse_documents(documents):
         # Extract metadata and page content
         source = doc.metadata.get('source', 'N/A')
         title = doc.metadata.get('title', 'N/A')
-        page_content = doc.page_content[:1000]  # Get up to N characters
+        page_content = doc.page_content[:args.embeddingdocsize]  # Get up to N characters
 
         # Format the extracted data
         formatted_data = f"Main Source: {source}\nTitle: {title}\nDocument Page Content: {page_content}\n"
@@ -170,7 +170,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
         warnings.simplefilter("ignore")
         try:
             data = loader.load() # Overlap chunks for better context
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=0)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=args.embeddingwindowsize, chunk_overlap=args.embeddingwindowoverlap)
             all_splits = text_splitter.split_documents(data)
             vectorstore = Chroma.from_documents(documents=all_splits, embedding=llama_embeddings, persist_directory=url_directory)
             vectorstore.persist()
@@ -292,7 +292,6 @@ parser.add_argument("-upr", "--usersamplingrate", type=int, default=16000,
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
                     help="Stop tokens to use, do not change unless you know what you are doing!")
 parser.add_argument("-ctx", "--context", type=int, default=32768, help="Model context, default 32768.")
-parser.add_argument("-ectx", "--embeddingscontext", type=int, default=1024, help="Embedding Model context, default 1024.")
 parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
 parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
 parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Temperature to set LLM Model.")
@@ -301,13 +300,17 @@ parser.add_argument("-dd", "--doubledebug", type=bool, default=False, help="Extr
 parser.add_argument("-s", "--silent", type=bool, default=False, help="Silent mode, No TTS Speaking.")
 parser.add_argument("-ro", "--romanize", type=bool, default=False, help="Romanize LLM output text before input into TTS engine.")
 parser.add_argument("-e", "--episode", type=bool, default=False, help="Episode mode, Output an TV Episode format script.")
-parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\nAnswer:",
+parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\nContext: {context}\nAnswer:",
                     help="Prompt completion like...\n\nQuestion: {user_question}\nAnswer:")
 parser.add_argument("-re", "--roleenforcer",
                     type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}, give your thoughts and opinions as asked.\n",
                     help="Role enforcer statement with {user} and {assistant} template names replaced by the actual ones in use.")
-parser.add_argument("-sd", "--summarizedocs", type=bool, default=False, help="Summarize the documents retrieved with a summarization model, takes a lot of resources")
-parser.add_argument("-udb", "--urlsdb", type=str, default="db/processed_urls.db", help="SQL Light DB file location")
+parser.add_argument("-sd", "--summarizedocs", type=bool, default=False, help="Summarize the documents retrieved with a summarization model, takes a lot of resources.")
+parser.add_argument("-udb", "--urlsdb", type=str, default="db/processed_urls.db", help="SQL Light DB file location.")
+parser.add_argument("-ectx", "--embeddingscontext", type=int, default=512, help="Embedding Model context, default 512.")
+parser.add_argument("-ews", "--embeddingwindowsize", type=int, default=256, help="Document embedding window size, default 256.")
+parser.add_argument("-ewo", "--embeddingwindowoverlap", type=int, default=25, help="Document embedding window overlap, default 25.")
+parser.add_argument("-eds", "--embeddingdocsize", type=int, default=4096, help="Document embedding window overlap, default 4096.")
 
 args = parser.parse_args()
 
@@ -567,9 +570,7 @@ if __name__ == "__main__":
             next_question = get_user_input()
             urls = extract_urls(next_question)
             context = ""
-            if len(urls) > 0:
-                context = "Context:\n"
-            else:
+            if len(urls) <= 0:
                 if args.debug:
                     print("--- Found no URLs in prompt")
 
@@ -596,16 +597,15 @@ if __name__ == "__main__":
                             parsed_output = summarize_documents(docs) # parse_documents gets more information with less precision
                         else:
                             parsed_output = parse_documents(docs)
-                        context = "%s\n%s\n\n" % (context, parsed_output.strip())
+                        context = "%s" % (parsed_output.strip().replace("\n", ', '))
             except Exception as e:
                 print("Error with url retrieval:", e)
 
-            prompt = "%sUse the above Context if any exists to help form the output. You are %s who is %s Using the Context as inspiration and references.\n%s%s" % (
-                    context,
+            prompt = "Use the Chat History and 'Context: <context>' section below if it has related information to help answer the question or tell the story requested. You are %s who is %s Use the Context as inspiration and references for your answers. Do not reveal that you are using the context, it is not part of the question but a document retrieved in relation to the questions.\n%s%s" % (
                     args.ainame,
                     args.aipersonality,
                     args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
-                    args.promptcompletion.replace('{user_question}', next_question))
+                    args.promptcompletion.replace('{user_question}', next_question).replace('{context}', context))
 
             if args.debug:
                 print("\n--- Using Prompt:\n---\n%s\n---\n" % prompt)
