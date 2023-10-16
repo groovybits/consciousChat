@@ -23,8 +23,28 @@ This project is licensed under the Apache License.
 - **Stream Speak**: Streams the conversation per `tokenstospeak` value instead of speaking at new lines.
 - **Episode Mode**: Enables the output to follow a TV episode script format.
 - **Multi-Lingual**: Ability to speak in most languages on output text and voice (if uroman.pl is installed).
-- **Webpage Retrieval**: Ability to look up all URLs in prompt and load up the LLM context with the summary.
+- **Webpage Retrieval**: Ability to look up all URLs in prompt and load up the LLM context with the summary + store them locally for future fast retrieval.
 
+## TODO
+
+- Thread the text to speech generation and speaking to allow LLM text generation simultaneously for more efficient usage and speed asyncronously.
+- Prompt template usage for cleaning up the prompt and making it standard.
+- Document retrieval from PDFs, Json, Text files for Context injection.
+- Female TTS model voices.
+- Better TTS quality? Facebook MMS is okay, nice natural sound, yet sort of rough sounding and 16k sample rate. Can we upscale it???
+- Document retrieval tuning of settings, speed up if possible.
+- Stable Diffusion image generation for background with LLM text on top of it.
+- Background Music generation.
+- Twitch Chat integration with users able to configure their own chatbot, control current ones, speak to them.
+- History per Twitch user and persistent history in general per chatbot.
+- Multiple models running simultaneously each as a personality chatting with other running models and sharing context and history.
+- News context injection for news reporting and seeding story generation without human interaction.
+- Storage of sessions in a DB (long-term, not a priority).
+- Generate a video in HLS or MpegTS format to stream out and push up to YouTube.
+- 3D Model control for characters vtuber type Blender models controlled by text generation and image generation.
+- Timing metrics
+- Many Many odds and ends, fixups and optimizations.
+- Have ability to run and stream on Twitch with users in chat interacting with the chat and multi-modal mpegts stream generation (can we rtmp up directly?)
 
 ## Recommended Models
 
