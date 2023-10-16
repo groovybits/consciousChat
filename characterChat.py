@@ -385,9 +385,9 @@ def get_user_input():
 ## Speak a line
 def speak_line(line):
     if args.silent:
-        return
+        return None
     if not line:
-        return
+        return None
     if args.debug:
         print("\n--- Speaking line with TTS...\n")
 
@@ -417,7 +417,7 @@ def speak_line(line):
             aioutput = aimodel(**aiinputs).waveform
     except Exception as e:
         print("\n--- Error with TTS AI Speech model!", e)
-        return
+        return None
 
     ## Buffer audio speech output as WAV
     waveform_np = aioutput.squeeze().numpy().T
@@ -500,7 +500,8 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
                         if line.strip():  # check if line is not empty
                             spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
                             buf = speak_line(spoken_line.strip())
-                            speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
+                            if buf:
+                                speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
                         tokens = []
         else:
             tokens.append(sub_token)
@@ -514,7 +515,8 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
             spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
             try:
                 buf = speak_line(spoken_line.strip())
-                speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
+                if buf:
+                    speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
             except Exception as e:
                 print("\n--- Error speaking line!!!:", e)
 
@@ -539,43 +541,21 @@ if __name__ == "__main__":
 
     initial_question = args.question
 
-    ## Question
-    if (initial_question != ""):
-        prompt = "%s: You are %s\n%s%s:" % (
-                args.ainame,
-                args.aipersonality,
-                args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
-                args.promptcompletion.replace('{user_question}', initial_question))
-
-        ## User Question
-        messages.append(ChatCompletionMessage(
-                role="user",
-                content="%s" % initial_question,
-            ))
-
-        print("%s" % prompt)
-        question_spoken = clean_text_for_tts(initial_question)
-        buf = speak_line(question_spoken)
-        speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
-
-        response = converse(initial_question, messages, pyaudio_handler, pyaudio_stream)
-
-        ## AI Response
-        messages.append(ChatCompletionMessage(
-                role="assistant",
-                content="%s" % response,
-            ))
-
     while True:
         try:
-            print("\n\n--- You can press the <Return> key for the output to continue where it last left off.")
-            if args.episode:
-                print("--- Create your plotline ", end='');
-            else:
-                print("--- Ask your question ", end='');
-            print("and press the Return key to continue, or Ctrl+C to exit the program.\n")
+            ## Did we get a question to start off with on input?
+            if (initial_question == ""):
+                print("\n\n--- You can press the <Return> key for the output to continue where it last left off.")
+                if args.episode:
+                    print("--- Create your plotline ", end='');
+                else:
+                    print("--- Ask your question ", end='');
+                print("and press the Return key to continue, or Ctrl+C to exit the program.\n")
 
-            next_question = get_user_input()
+                next_question = get_user_input()
+            else:
+                next_question == initial_question
+
             urls = extract_urls(next_question)
             context = ""
             if len(urls) <= 0:
@@ -638,12 +618,19 @@ if __name__ == "__main__":
                     role="assistant",
                     content="%s" % response,
                 ))
+
+            if args.debug:
+                print("\n\nChat History:", messages)
         except KeyboardInterrupt:
             print("\n--- Exiting...")
+            cleanup()
             break
 
+def cleanup():
     ## Stop and cleanup speaking TODO keep this open
-    pyaudio_stream.stop_stream()
-    pyaudio_stream.close()
-    pyaudio_handler.terminate()
+    if not args.silent and pyaudio_stream:
+        pyaudio_stream.stop_stream()
+        pyaudio_stream.close()
+        if pyaudio_handler:
+            pyaudio_handler.terminate()
 
