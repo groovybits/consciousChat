@@ -18,10 +18,10 @@ import subprocess
 import torch
 from transformers import VitsModel, AutoTokenizer, pipeline, set_seed, logging
 from llama_cpp import Llama, ChatCompletionMessage
-from langchain.document_loaders.recursive_url_loader import RecursiveUrlLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain.embeddings import LlamaCppEmbeddings
+from langchain.document_loaders.recursive_url_loader import RecursiveUrlLoader
 from bs4 import BeautifulSoup as Soup
 import sounddevice as sd
 import soundfile as sf
@@ -342,6 +342,10 @@ usermodel = None
 user_speaking_rate = args.userspeakingrate
 user_noise_scale = args.usernoisescale
 
+## PyAudio stream and handler
+pyaudio_stream = None
+pyaudio_handler = None
+
 if not args.silent:
     aimodel = VitsModel.from_pretrained(facebook_model)
     aitokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)
@@ -421,28 +425,29 @@ def speak_line(line):
     sf.write(buf, waveform_np, ai_sampling_rate, format='WAV')
     buf.seek(0)
 
+    return buf
+
+
+## Speak WAV Files
+def speak_wave(buf, pyaudio_handler, pyaudio_stream):
     ## Speak TTS Output
     wave_obj = wave.open(buf)
-    p = pyaudio.PyAudio()
-    stream = p.open(format=p.get_format_from_width(wave_obj.getsampwidth()),
-                    channels=wave_obj.getnchannels(),
-                    rate=wave_obj.getframerate(),
-                    output=True)
+    if (pyaudio_handler == None):
+        pyaudio_handler = pyaudio.PyAudio()
+        pyaudio_stream = pyaudio_handler.open(format=pyaudio_handler.get_format_from_width(wave_obj.getsampwidth()),
+                        channels=wave_obj.getnchannels(),
+                        rate=wave_obj.getframerate(),
+                        output=True)
 
     ## Read and Speak
     while True:
         data = wave_obj.readframes(1024)
         if not data:
             break
-        stream.write(data)
-
-    ## Stop and cleanup speaking TODO keep this open
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
+        pyaudio_stream.write(data)
 
 ## AI Conversation
-def converse(question, messages):
+def converse(question, messages, pyaudio_handler, pyaudio_stream):
     output = llm.create_chat_completion(
         messages,
         max_tokens=args.maxtokens,
@@ -494,7 +499,8 @@ def converse(question, messages):
                         tokens_to_speak = 0
                         if line.strip():  # check if line is not empty
                             spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
-                            speak_line(spoken_line.strip())
+                            buf = speak_line(spoken_line.strip())
+                            speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
                         tokens = []
         else:
             tokens.append(sub_token)
@@ -507,7 +513,8 @@ def converse(question, messages):
         if line.strip():  # check if line is not empty
             spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
             try:
-                speak_line(spoken_line.strip())
+                buf = speak_line(spoken_line.strip())
+                speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
             except Exception as e:
                 print("\n--- Error speaking line!!!:", e)
 
@@ -548,9 +555,10 @@ if __name__ == "__main__":
 
         print("%s" % prompt)
         question_spoken = clean_text_for_tts(initial_question)
-        speak_line(question_spoken)
+        buf = speak_line(question_spoken)
+        speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
 
-        response = converse(initial_question, messages)
+        response = converse(initial_question, messages, pyaudio_handler, pyaudio_stream)
 
         ## AI Response
         messages.append(ChatCompletionMessage(
@@ -623,7 +631,7 @@ if __name__ == "__main__":
             else:
                 print("\n--- Generating the answer to your question...", end='');
             print ("   (this may take awhile without a big GPU)")
-            response = converse(next_question, messages)
+            response = converse(next_question, messages, pyaudio_handler, pyaudio_stream)
 
             ## AI Response History
             messages.append(ChatCompletionMessage(
@@ -633,4 +641,9 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             print("\n--- Exiting...")
             break
+
+    ## Stop and cleanup speaking TODO keep this open
+    pyaudio_stream.stop_stream()
+    pyaudio_stream.close()
+    pyaudio_handler.terminate()
 
