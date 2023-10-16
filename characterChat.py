@@ -54,7 +54,7 @@ def summarize_documents(documents):
         title = doc.metadata.get('title', 'N/A')
 
         # Summarize page content
-        summary = summarizer(doc.page_content, max_length=200, min_length=20, do_sample=False)
+        summary = summarizer(doc.page_content, max_length=1000, min_length=30, do_sample=False)
         summarized_content = summary[0]['summary_text'].strip()
 
         # Format the extracted and summarized data
@@ -80,7 +80,7 @@ def parse_documents(documents):
         # Extract metadata and page content
         source = doc.metadata.get('source', 'N/A')
         title = doc.metadata.get('title', 'N/A')
-        page_content = doc.page_content[:100]  # Get up to N characters
+        page_content = doc.page_content[:1000]  # Get up to N characters
 
         # Format the extracted data
         formatted_data = f"Main Source: {source}\nTitle: {title}\nDocument Page Content: {page_content}\n"
@@ -143,8 +143,9 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
         print(f"\n--- URL {url} has already been processed.")
         db_conn.close()
         try:
-            vectorstore = Chroma.from_directory(url_directory)
-            docs = vectorstore.similarity_search(question) ## Vector DB Search
+            vdb = Chroma(persist_directory=url_directory, embedding_function=llama_embeddings)
+            docs = vdb.similarity_search(question)
+
             db_conn.close() ## Close DB
             if args.debug:
                 print("--- gethttp() Found vector embeddings for {url}, returning them...", docs)
@@ -159,7 +160,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
     db_conn.close()
 
     try:
-        loader = RecursiveUrlLoader(url=url, max_depth=1, extractor=lambda x: Soup(x, "html.parser").text)
+        loader = RecursiveUrlLoader(url=url, max_depth=3, extractor=lambda x: Soup(x, "html.parser").text)
     except Exception as e:
         print("\n--- Error: with url {url} gethttp Url Loader:", e)
         return []
@@ -169,15 +170,17 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
         warnings.simplefilter("ignore")
         try:
             data = loader.load() # Overlap chunks for better context
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=250, chunk_overlap=0)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=512, chunk_overlap=0)
             all_splits = text_splitter.split_documents(data)
             vectorstore = Chroma.from_documents(documents=all_splits, embedding=llama_embeddings, persist_directory=url_directory)
+            vectorstore.persist()
             docs = vectorstore.similarity_search(question)
         except Exception as e:
             print("\n--- Error with {url} text splitting in gethttp():", e)
 
     ## Only save if we found something
     if len(docs) > 0:
+        print("Retrieved documents from Vector DB:", docs)
         db_conn = sqlite3.connect(args.urlsdb)
         ## Save url into db
         db_conn.execute("INSERT INTO urls (url) VALUES (?)", (url,))
@@ -248,7 +251,7 @@ def check_min(value):
 default_ai_name = "Buddha"
 default_human_name = "Human"
 
-default_model = "models/zephyr-7b-alpha.Q2_K.gguf"
+default_model = "models/zephyr-7b-alpha.Q8_0.gguf"
 default_embedding_model = "models/q4-openllama-platypus-3b.gguf"
 
 default_ai_personality = "You are the wise Buddha"
@@ -289,7 +292,7 @@ parser.add_argument("-upr", "--usersamplingrate", type=int, default=16000,
 parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
                     help="Stop tokens to use, do not change unless you know what you are doing!")
 parser.add_argument("-ctx", "--context", type=int, default=32768, help="Model context, default 32768.")
-parser.add_argument("-ectx", "--embeddingscontext", type=int, default=256, help="Embedding Model context, default 256.")
+parser.add_argument("-ectx", "--embeddingscontext", type=int, default=1024, help="Embedding Model context, default 1024.")
 parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
 parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
 parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Temperature to set LLM Model.")
@@ -359,11 +362,11 @@ if not args.silent:
         print("\n--- Error user samplingrate is not matching the models of %d" % usermodel.sampling_rate)
 
 ## LLM Model for Text TODO are setting gpu layers good/necessary?
-#llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
-llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug)
+llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
 ## Text embeddings, enable only if needed
 llama_embeddings = None
+embedding_function = None
 
 ## Human User prompt
 def get_user_input():
@@ -574,11 +577,11 @@ if __name__ == "__main__":
                 for url in urls:
                     if args.debug:
                         print("\n--- Found URL {url} in prompt input.")
-                    ## LLM Model for Text Embeddings from Documents and Websites etc...
-                    #   TODO figure out n_gpu_layers=args.gpulayers)
+
                     if llama_embeddings == None:
                         llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
-                                                              n_ctx=args.embeddingscontext, verbose=args.doubledebug)
+                                                              n_ctx=args.embeddingscontext, verbose=args.doubledebug,
+                                                              n_gpu_layers=args.gpulayers)
 
                     # Initialize summarization pipeline for summarizing Documents retrieved
                     summarizer = None

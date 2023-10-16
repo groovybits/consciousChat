@@ -9,7 +9,6 @@ inflect
 sounddevice
 pyaudio
 llama-cpp-python
-chromadb
 langchainhub
 langchain
 bs4
