@@ -12,3 +12,4 @@ llama-cpp-python
 langchainhub
 langchain
 bs4
+chromadb

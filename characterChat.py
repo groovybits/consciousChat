@@ -522,6 +522,14 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
 
     return ''.join(tokens).strip()
 
+def cleanup():
+    ## Stop and cleanup speaking TODO keep this open
+    if not args.silent and pyaudio_stream:
+        pyaudio_stream.stop_stream()
+        pyaudio_stream.close()
+        if pyaudio_handler:
+            pyaudio_handler.terminate()
+
 
 ## Main
 if __name__ == "__main__":
@@ -555,6 +563,8 @@ if __name__ == "__main__":
                 next_question = get_user_input()
             else:
                 next_question == initial_question
+                initial_question = "" # Clear so we don't loop
+
 
             urls = extract_urls(next_question)
             context = ""
@@ -625,12 +635,4 @@ if __name__ == "__main__":
             print("\n--- Exiting...")
             cleanup()
             break
-
-def cleanup():
-    ## Stop and cleanup speaking TODO keep this open
-    if not args.silent and pyaudio_stream:
-        pyaudio_stream.stop_stream()
-        pyaudio_stream.close()
-        if pyaudio_handler:
-            pyaudio_handler.terminate()
 

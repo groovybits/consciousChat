@@ -72,6 +72,13 @@ This project is licensed under the Apache License.
     - Use the "-ro True" option to romanize the TTS speaking text.
 
 ```bash
+# Development SDK on Mac OS X
+
+# Python3 path set on Mac OS X to SDK tools
+
+# Portaudio on Mac OS X
+brew install portaudio
+
 # setup Python virtual environment
 pip install virtualenv
 python -m venv consciousChat
