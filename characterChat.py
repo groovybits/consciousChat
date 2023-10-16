@@ -576,6 +576,7 @@ if __name__ == "__main__":
 
             try:
                 for url in urls:
+                    url = url.strip(",.;:")
                     if args.debug:
                         print("\n--- Found URL {url} in prompt input.")
 
