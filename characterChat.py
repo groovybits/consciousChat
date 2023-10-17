@@ -32,6 +32,7 @@ import warnings
 import logging as logger
 import sqlite3
 from urllib.parse import urlparse
+import urllib3
 
 ## Quiet operation, no warnings
 logger.basicConfig(level=logger.ERROR)
