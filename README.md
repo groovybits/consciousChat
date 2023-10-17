@@ -76,6 +76,9 @@ This project is licensed under the Apache License.
 
 # Python3 path set on Mac OS X to SDK tools
 
+# Install OpenSSL on Mac OS X so Python doesn't complain
+brew install openssl
+
 # Portaudio on Mac OS X
 brew install portaudio
 

@@ -37,6 +37,7 @@ from urllib.parse import urlparse
 logger.basicConfig(level=logger.ERROR)
 logging.set_verbosity_error()
 warnings.simplefilter(action='ignore', category=Warning)
+warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 
 def summarize_documents(documents):
     """
@@ -300,7 +301,7 @@ parser.add_argument("-dd", "--doubledebug", type=bool, default=False, help="Extr
 parser.add_argument("-s", "--silent", type=bool, default=False, help="Silent mode, No TTS Speaking.")
 parser.add_argument("-ro", "--romanize", type=bool, default=False, help="Romanize LLM output text before input into TTS engine.")
 parser.add_argument("-e", "--episode", type=bool, default=False, help="Episode mode, Output an TV Episode format script.")
-parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\nContext: {context}\nAnswer:",
+parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}{context}Answer:",
                     help="Prompt completion like...\n\nQuestion: {user_question}\nAnswer:")
 parser.add_argument("-re", "--roleenforcer",
                     type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}, give your thoughts and opinions as asked.\n",
@@ -604,7 +605,7 @@ if __name__ == "__main__":
                     args.ainame,
                     args.aipersonality,
                     args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
-                    args.promptcompletion.replace('{user_question}', next_question).replace('{context}', context))
+                    args.promptcompletion.replace('{user_question}', next_question).replace('{context}', "\nContext:%s\n" % context))
 
             if args.debug:
                 print("\n--- Using Prompt:\n---\n%s\n---\n" % prompt)
