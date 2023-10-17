@@ -182,7 +182,8 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
 
     ## Only save if we found something
     if len(docs) > 0:
-        print("Retrieved documents from Vector DB:", docs)
+        if args.debug:
+            print("Retrieved documents from Vector DB:", docs)
         db_conn = sqlite3.connect(args.urlsdb)
         ## Save url into db
         db_conn.execute("INSERT INTO urls (url) VALUES (?)", (url,))
