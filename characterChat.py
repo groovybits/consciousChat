@@ -42,40 +42,50 @@ warnings.simplefilter(action='ignore', category=Warning)
 warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 
 # Define a lock for thread safety
-buffer_lock = threading.Lock()
+#audio_queue_lock = threading.Lock()
+#speak_queue_lock = threading.Lock()
 
 def speak_worker():
-    speaking_buffer_text = ""
+    encoding_buffer_text = ""
     buffer_list = []
+    buffer_sent = False  # flag to track if the buffer has been sent to the player
+
     while True:
-        # Get the next sentence from the queue
         line = speak_queue.get()
+        if line == "":
+            continue
 
-        # If we get a 'STOP' command, we break out of the loop
+        buf = encode_line(line)
+        if buf is not None:
+            buffer_list.append(buf.getvalue())
+            encoding_buffer_text = encoding_buffer_text + line
+
+        if len(encoding_buffer_text) > 0:
+            combined_buffer = b"".join(buffer_list)  # join byte strings
+            audio_queue.put(combined_buffer)  # push to the audio queue
+            buffer_list.clear()
+            encoding_buffer_text = ""
+            buffer_sent = True
+
+        # If we get a 'STOP' command, send the remaining buffer to audio_queue, and then send 'STOP'
         if line == 'STOP':
+            if buffer_list and not buffer_sent:  # check if the buffer hasn't been sent yet
+                combined_buffer = b"".join(buffer_list)
+                audio_queue.put(combined_buffer)
+                buffer_list.clear()
+                encoding_buffer_text = ""
+            audio_queue.put('STOP')
             break
-        with buffer_lock:
-            # Only send the new line to speak_line
-            buf = speak_line(line)
-            if buf is not None:
-                buffer_list.append(buf)
-                speaking_buffer_text = "%s%s" % (speaking_buffer_text, line)
-            else:
-                # Handle the error or log the issue. Here, I'm just printing an error message.
-                print("Error: speak_line returned None.")
 
-        # Speak the sentences
-        if len(speaking_buffer_text) > args.tokenstospeak:
-            with buffer_lock:
-                # Combine all buffers into one continuous audio stream
-                combined_buffer = io.BytesIO()
-                for audio_buf in buffer_list:
-                    combined_buffer.write(audio_buf.getvalue())
-                combined_buffer.seek(0)
+        buffer_sent = False  # reset the flag for the next iteration
 
-                speak_wave(combined_buffer, pyaudio_handler, pyaudio_stream)  # speak the combined WAV Audio
-                buffer_list.clear()  # Clear the list after playing the audio
-                speaking_buffer_text = ""  # Clear the accumulated text after playing the audio
+def audio_worker():
+    while True:
+        data = audio_queue.get()
+        if data == 'STOP':
+            break
+        buf = io.BytesIO(data)
+        speak_wave(buf, pyaudio_handler, pyaudio_stream)
 
 def summarize_documents(documents):
     """
@@ -296,7 +306,7 @@ def get_user_input():
         return input("Question: ")
 
 ## Speak a line
-def speak_line(line):
+def encode_line(line):
     if args.silent:
         return None
     if not line or line == "":
@@ -370,22 +380,20 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
         stop=args.stoptokens.split(',') if args.stoptokens else []  # use split() result if stoptokens is not empty
     )
 
-    tokens = []
-    speaktokens = []
+    speaktokens = ['\n', '.', '?', ',']
     if args.streamspeak:
-        speaktokens.extend([' ', '\n', '.', '?', ','])
-    else:
-        speaktokens.extend(['\n', '.', '?', ','])
+        speaktokens.append(' ')
 
     token_count = 0
     tokens_to_speak = 0
     role = ""
+    accumulator = []
+
     for item in output:
         if args.doubledebug:
             print("--- Got Item: %s\n" % json.dumps(item))
 
         delta = item["choices"][0]['delta']
-        token = ""
         if 'role' in delta:
             if args.debug:
                 print(f"\n--- Found Role: {delta['role']}: ")
@@ -394,43 +402,33 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
         # Check if we got a token
         if 'content' not in delta:
             if args.doubledebug:
-                print(f"--- Skipping lack of content: {delta}")
+                 print(f"--- Skipping lack of content: {delta}")
             continue
-
         token = delta['content']
-        output_tokens = "%s%s" % (output_tokens, token)
+        output_tokens += token
+        accumulator.append(token)
+        token_count += 1
+        tokens_to_speak += 1
+
         sub_tokens = re.split('([ ,.\n?])', token)
-        if len(sub_tokens) > 0:
-            for sub_token in sub_tokens:
-                if sub_token:  # check if sub_token is not empty
-                    tokens.append(sub_token)
-                    token_count += 1
-                    tokens_to_speak += 1
-                    print("%s" % sub_token, end='', flush=True)
+        for sub_token in sub_tokens:
+            if sub_token in speaktokens and tokens_to_speak >= args.tokenstospeak:
+                line = ''.join(accumulator)
+                if line.strip():  # check if line is not empty
+                    spoken_line = line #clean_text_for_tts(line)
+                    speak_queue.put(spoken_line)
+                    accumulator.clear()  # Clear the accumulator after sending to speak_queue
+                    tokens_to_speak = 0  # Reset the counter
+                    break;
 
-                    if ((args.streamspeak and tokens_to_speak > args.tokenstospeak) or
-                            (tokens_to_speak > args.mintokenstospeak)) and (sub_token[len(sub_token)-1] in speaktokens):
-                        line = ''.join(tokens)
-                        tokens_to_speak = 0
-                        if line.strip():  # check if line is not empty
-                            spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
-                            speak_queue.put(spoken_line)
-
-                        tokens = []
-        else:
-            tokens.append(sub_token)
-            token_count += 1
-            tokens_to_speak += 1
-            print("%s" % sub_token, end='', flush=True)
-
-    if tokens:  # if there are any remaining tokens, speak the last line
-        line = ''.join(tokens)
-        if line.strip():  # check if line is not empty
-            spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
-            try:
-                speak_queue.put(spoken_line)
-            except Exception as e:
-                print("\n--- Error speaking line!!!:", e)
+    # Check if there are any remaining tokens in the accumulator after processing all tokens
+    if accumulator:
+        line = ''.join(accumulator)
+        if line.strip():
+            spoken_line = line #clean_text_for_tts(line)
+            speak_queue.put(spoken_line)
+            accumulator.clear()  # Clear the accumulator after sending to speak_queue
+            tokens_to_speak = 0  # Reset the counter
 
     return output_tokens
 
@@ -590,8 +588,11 @@ if __name__ == "__main__":
 
     # Create a queue for lines to be spoken
     speak_queue = queue.Queue()
+    audio_queue = queue.Queue()
     speak_thread = threading.Thread(target=speak_worker)
+    audio_thread = threading.Thread(target=audio_worker)
     speak_thread.start()
+    audio_thread.start()
 
     ## System role
     messages=[
