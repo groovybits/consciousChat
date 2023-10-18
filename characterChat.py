@@ -405,10 +405,12 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
                  print(f"--- Skipping lack of content: {delta}")
             continue
         token = delta['content']
-        output_tokens += token
         accumulator.append(token)
         token_count += 1
         tokens_to_speak += 1
+
+        # TODO create a print output queue thread for our output text
+        print(token, end='', flush=True)
 
         sub_tokens = re.split('([ ,.\n?])', token)
         for sub_token in sub_tokens:
@@ -418,6 +420,7 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
                     spoken_line = line #clean_text_for_tts(line)
                     speak_queue.put(spoken_line)
                     accumulator.clear()  # Clear the accumulator after sending to speak_queue
+                    output_tokens += line
                     tokens_to_speak = 0  # Reset the counter
                     break;
 
@@ -428,6 +431,7 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
             spoken_line = line #clean_text_for_tts(line)
             speak_queue.put(spoken_line)
             accumulator.clear()  # Clear the accumulator after sending to speak_queue
+            output_tokens += line
             tokens_to_speak = 0  # Reset the counter
 
     return output_tokens
