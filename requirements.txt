@@ -13,3 +13,5 @@ langchainhub
 langchain
 bs4
 chromadb
+diffusers
+wxPython

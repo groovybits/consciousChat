@@ -22,6 +22,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
 from langchain.embeddings import LlamaCppEmbeddings
 from langchain.document_loaders.recursive_url_loader import RecursiveUrlLoader
+from diffusers import DiffusionPipeline
 from bs4 import BeautifulSoup as Soup
 import sounddevice as sd
 import soundfile as sf
@@ -36,12 +37,20 @@ import urllib3
 import threading
 import signal
 import sys
+import wx
+from PIL import Image
+from tqdm import tqdm
+import uuid
+
+tqdm.disable = True
 
 ## Quiet operation, no warnings
 logger.basicConfig(level=logger.ERROR)
 logging.set_verbosity_error()
 warnings.simplefilter(action='ignore', category=Warning)
 warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
+from urllib3.exceptions import NotOpenSSLWarning
+warnings.simplefilter(action='ignore', category=NotOpenSSLWarning)
 
 # Define a lock for thread safety
 #audio_queue_lock = threading.Lock()
@@ -50,11 +59,73 @@ warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 
 exit_now = False
 
+pipe = DiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5")
+pipe = pipe.to("mps")
+# Recommended if your computer has < 64 GB of RAM
+#pipe.enable_attention_slicing()
+# First-time "warmup" pass if PyTorch version is 1.13 (see explanation above)
+#_ = pipe(prompt, num_inference_steps=1)
+
+class ImageHistory:
+    def __init__(self):
+        self.images = []
+        
+    def add_image(self, pil_image, prompt):
+        # Store in the data structure
+        image_data = {"image": pil_image, "prompt": prompt}
+        self.images.append(image_data)
+
+        # Sanitize the filename
+        id = uuid.uuid4().hex
+        filename = "".join([c for c in prompt if c.isalpha() or c.isdigit() or c in (' ', '.')])
+        filename = "_".join(filename.split())
+        filepath = os.path.join("saved_images", f"{filename}_{id}.png")
+        
+        # Save to disk
+        pil_image.save(filepath)
+
+# Create the main wx App
+class ImageApp(wx.App):
+    def __init__(self, image_history):
+        super().__init__(False)
+        self.frame = wx.Frame(None, wx.ID_ANY, "Image Display")
+        self.panel = wx.Panel(self.frame)
+        self.image_history = image_history
+
+    def on_run(self):
+        # Display the last image from the image_history
+        if self.image_history.images:
+            pil_image = self.image_history.images[-1]["image"]
+            wx_image = wx.Image(pil_image.size[0], pil_image.size[1])
+            wx_image.SetData(pil_image.tobytes())
+            wx.BitmapFromImage(wx_image)
+
+        self.frame.Show()
+        self.MainLoop()
+
+image_history = ImageHistory()
+
 def image_worker():
     while not exit_now:
         image_prompt = image_queue.get()
         if exit_now or image_prompt == 'STOP':
             break;
+        else:
+            image = pipe(image_prompt,
+                         height = 512,
+                         width=512,
+                         num_inference_steps = 50,
+                         guidance_scale = 7.5,
+                         num_images_per_prompt = 1
+                    ).images[0]
+            print("Stable Diffusion got an image: ", image)
+            
+            # Store the image in the history and save to disk
+            image_history.add_image(image, image_prompt)
+
+            # Display the image
+            app = ImageApp(image_history)
+            app.on_run()
 
 def speak_worker():
     encoding_buffer_text = ""
@@ -105,12 +176,14 @@ def audio_worker():
     while not exit_now:
         text = text_queue.get()
         audio = audio_queue.get()
+        image_queue.put(text)
         if audio == 'STOP':
             audio_stopped = True
         if text == 'STOP':
             text_stopped = True
         if (text_stopped and audio_stopped):
             output_queue.put('STOP')
+            image_queue.put('STOP')
             break ## Finished with Text and Audio generation output
         if audio != "":
             audiobuf = io.BytesIO(audio)
