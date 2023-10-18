@@ -551,6 +551,7 @@ if __name__ == "__main__":
     ]
 
     initial_question = args.question
+    next_question = ""
 
     while True:
         try:
