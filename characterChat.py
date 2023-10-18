@@ -44,6 +44,13 @@ warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 # Define a lock for thread safety
 #audio_queue_lock = threading.Lock()
 #speak_queue_lock = threading.Lock()
+#image_queue_lock = threading.Lock()
+
+def image_worker():
+    while True:
+        image_prompt = image_queue.get()
+        if image_prompt == 'STOP':
+            break;
 
 def speak_worker():
     encoding_buffer_text = ""
@@ -62,6 +69,7 @@ def speak_worker():
 
         if len(encoding_buffer_text) > 0:
             combined_buffer = b"".join(buffer_list)  # join byte strings
+            text_queue.put(encoding_buffer_text)  # push to the text queue
             audio_queue.put(combined_buffer)  # push to the audio queue
             buffer_list.clear()
             encoding_buffer_text = ""
@@ -71,21 +79,34 @@ def speak_worker():
         if line == 'STOP':
             if buffer_list and not buffer_sent:  # check if the buffer hasn't been sent yet
                 combined_buffer = b"".join(buffer_list)
-                audio_queue.put(combined_buffer)
+                text_queue.put(encoding_buffer_text)  # push to the text queue
+                audio_queue.put(combined_buffer)  # push to the audio queue
                 buffer_list.clear()
                 encoding_buffer_text = ""
             audio_queue.put('STOP')
+            text_queue.put('STOP')
+            image_queue.put('STOP')
             break
 
         buffer_sent = False  # reset the flag for the next iteration
 
 def audio_worker():
+    audio_stopped = False
+    text_stopped = False
     while True:
-        data = audio_queue.get()
-        if data == 'STOP':
-            break
-        buf = io.BytesIO(data)
-        speak_wave(buf, pyaudio_handler, pyaudio_stream)
+        text = text_queue.get()
+        audio = audio_queue.get()
+        if audio == 'STOP':
+            audio_stopped = True
+        if text == 'STOP':
+            text_stopped = True
+        if (text_stopped and audio_stopped):
+            output_queue.put('STOP')
+            break ## Finished with Text and Audio generation output
+        if audio != "":
+            audiobuf = io.BytesIO(audio)
+            if audiobuf:
+                speak_wave(audiobuf, pyaudio_handler, pyaudio_stream)
 
 def summarize_documents(documents):
     """
@@ -301,9 +322,9 @@ def check_min(value):
 ## Human User prompt
 def get_user_input():
     if args.episode:
-        return input("Plotline: ")
+        return input("\nPlotline: ")
     else:
-        return input("Question: ")
+        return input("\nQuestion: ")
 
 ## Speak a line
 def encode_line(line):
@@ -370,71 +391,89 @@ def speak_wave(buf, pyaudio_handler, pyaudio_stream):
         pyaudio_stream.write(data)
 
 ## AI Conversation
-def converse(question, messages, pyaudio_handler, pyaudio_stream):
-    output_tokens = ""
-    output = llm.create_chat_completion(
-        messages,
-        max_tokens=args.maxtokens,
-        temperature=args.temperature,
-        stream=True,
-        stop=args.stoptokens.split(',') if args.stoptokens else []  # use split() result if stoptokens is not empty
-    )
+def prompt_worker():
+    while True:
+        request = []
+        question = ""
+        messages = []
+        pyaudio_handler = None
+        pyaudio_stream = None
+        while True:
+            ## prompt_queue.put([next_question, history, pyaudio_handler, pyaudio_stream])
+            request = prompt_queue.get()
+            if len(request) == 4 and request[0] != "":
+                # extract our variables 
+                question, messages, pyaudio_handler, pyaudio_stream = request
+                break;
+            else:
+                print("prompt_worker(): Got back queue packet", request)
+                continue
 
-    speaktokens = ['\n', '.', '?', ',']
-    if args.streamspeak:
-        speaktokens.append(' ')
+        if request[0] == 'STOP':
+            output_queue.put('STOP')
+            break
 
-    token_count = 0
-    tokens_to_speak = 0
-    role = ""
-    accumulator = []
+        output = llm.create_chat_completion(
+            messages,
+            max_tokens=args.maxtokens,
+            temperature=args.temperature,
+            stream=True,
+            stop=args.stoptokens.split(',') if args.stoptokens else []  # use split() result if stoptokens is not empty
+        )
 
-    for item in output:
-        if args.doubledebug:
-            print("--- Got Item: %s\n" % json.dumps(item))
+        speaktokens = ['\n', '.', '?', ',']
+        if args.streamspeak:
+            speaktokens.append(' ')
 
-        delta = item["choices"][0]['delta']
-        if 'role' in delta:
-            if args.debug:
-                print(f"\n--- Found Role: {delta['role']}: ")
-            role = delta['role']
+        token_count = 0
+        tokens_to_speak = 0
+        role = ""
+        accumulator = []
 
-        # Check if we got a token
-        if 'content' not in delta:
+        for item in output:
             if args.doubledebug:
-                 print(f"--- Skipping lack of content: {delta}")
-            continue
-        token = delta['content']
-        accumulator.append(token)
-        token_count += 1
-        tokens_to_speak += 1
+                print("--- Got Item: %s\n" % json.dumps(item))
 
-        # TODO create a print output queue thread for our output text
-        print(token, end='', flush=True)
+            delta = item["choices"][0]['delta']
+            if 'role' in delta:
+                if args.debug:
+                    print(f"\n--- Found Role: {delta['role']}: ")
+                role = delta['role']
 
-        sub_tokens = re.split('([ ,.\n?])', token)
-        for sub_token in sub_tokens:
-            if sub_token in speaktokens and tokens_to_speak >= args.tokenstospeak:
-                line = ''.join(accumulator)
-                if line.strip():  # check if line is not empty
-                    spoken_line = line #clean_text_for_tts(line)
-                    speak_queue.put(spoken_line)
-                    accumulator.clear()  # Clear the accumulator after sending to speak_queue
-                    output_tokens += line
-                    tokens_to_speak = 0  # Reset the counter
-                    break;
+            # Check if we got a token
+            if 'content' not in delta:
+                if args.doubledebug:
+                     print(f"--- Skipping lack of content: {delta}")
+                continue
+            token = delta['content']
+            accumulator.append(token)
+            token_count += 1
+            tokens_to_speak += 1
 
-    # Check if there are any remaining tokens in the accumulator after processing all tokens
-    if accumulator:
-        line = ''.join(accumulator)
-        if line.strip():
-            spoken_line = line #clean_text_for_tts(line)
-            speak_queue.put(spoken_line)
-            accumulator.clear()  # Clear the accumulator after sending to speak_queue
-            output_tokens += line
-            tokens_to_speak = 0  # Reset the counter
+            output_queue.put(token)
 
-    return output_tokens
+            sub_tokens = re.split('([ ,.\n?])', token)
+            for sub_token in sub_tokens:
+                if sub_token in speaktokens and tokens_to_speak >= args.tokenstospeak:
+                    line = ''.join(accumulator)
+                    if line.strip():  # check if line is not empty
+                        spoken_line = line #clean_text_for_tts(line)
+                        speak_queue.put(spoken_line)
+                        accumulator.clear()  # Clear the accumulator after sending to speak_queue
+                        tokens_to_speak = 0  # Reset the counter
+                        break;
+
+        # Check if there are any remaining tokens in the accumulator after processing all tokens
+        if accumulator:
+            line = ''.join(accumulator)
+            if line.strip():
+                spoken_line = line #clean_text_for_tts(line)
+                speak_queue.put(spoken_line)
+                accumulator.clear()  # Clear the accumulator after sending to speak_queue
+                tokens_to_speak = 0  # Reset the counter
+
+        # Stop the output loop
+        output_queue.put('STOP')
 
 def cleanup():
     ## Stop and cleanup speaking TODO keep this open
@@ -446,7 +485,14 @@ def cleanup():
 
     # When you're ready to exit the program:
     speak_queue.put("STOP")
+    text_queue.put("STOP")
+    image_queue.put("STOP")
+    output_queue.put("STOP")
+    prompt_queue.put("STOP")
     speak_thread.join()  # Wait for the speaking thread to finish
+    image_thread.join()  # Wait for the image thread to finish
+    audio_thread.join()  # Wait for the audio thread to finish
+    prompt_thread.join()  # Wait for the prompt thread to finish
 
 ## Main
 if __name__ == "__main__":
@@ -593,10 +639,20 @@ if __name__ == "__main__":
     # Create a queue for lines to be spoken
     speak_queue = queue.Queue()
     audio_queue = queue.Queue()
+    image_queue = queue.Queue()
+    text_queue = queue.Queue()
+    output_queue = queue.Queue()
+    prompt_queue = queue.Queue()
+
+    # Create threads
     speak_thread = threading.Thread(target=speak_worker)
-    audio_thread = threading.Thread(target=audio_worker)
     speak_thread.start()
+    audio_thread = threading.Thread(target=audio_worker)
     audio_thread.start()
+    image_thread = threading.Thread(target=image_worker)
+    image_thread.start()
+    prompt_thread = threading.Thread(target=prompt_worker)
+    prompt_thread.start()
 
     ## System role
     messages=[
@@ -623,11 +679,13 @@ if __name__ == "__main__":
                 print("and press the Return key to continue, or Ctrl+C to exit the program.\n")
 
                 next_question = get_user_input()
+                print("", flush=True)
             else:
                 next_question = args.question
+                args.question = ""
 
             if args.debug:
-                print("--- Next Question: %s" % next_question)
+                print("\n--- Next Question: %s" % next_question)
 
             urls = extract_urls(next_question)
             context = ""
@@ -663,17 +721,26 @@ if __name__ == "__main__":
             except Exception as e:
                 print("Error with url retrieval:", e)
 
+            ## Context inclusion if we have vectorDB results
             prompt_context = ""
             if context != "":
                 prompt_context = "Context:%s\n" % context
 
-
             if args.debug:
                 print("User Question: %s" % next_question);
+            
+            ## Prompt parts
+            instructions = "Use the Chat History and 'Context: <context>' section below if it has related information to help answer the question or tell the story requested."
+            role = "Do not reveal that you are using the context, it is not part of the question but a document retrieved in relation to the questions."
+            purpose = "Use the Context as inspiration and references for your answers."
 
-            prompt = "Use the Chat History and 'Context: <context>' section below if it has related information to help answer the question or tell the story requested. You are %s who is %s Use the Context as inspiration and references for your answers. Do not reveal that you are using the context, it is not part of the question but a document retrieved in relation to the questions.\n%s%s" % (
+            ## Build prompt
+            prompt = "%s You are %s who is %s %s %s\n%s%s" % (
+                    instructions,
                     args.ainame,
                     args.aipersonality,
+                    purpose,
+                    role,
                     args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
                     args.promptcompletion.replace('{user_question}', next_question).replace('{context}', prompt_context))
 
@@ -688,6 +755,7 @@ if __name__ == "__main__":
                     content="%s" % prompt,
                 ))
 
+            ## History debug output
             if args.debug:
                 print("\n\nChat History:", history)
 
@@ -703,13 +771,29 @@ if __name__ == "__main__":
 
             # Generate the Answer
             if args.episode:
-                print("\n--- Generating an episode from your plotline...", end='');
+                print("\n--- Generating an episode from your plotline...\n", end='', flush=True);
             else:
-                print("\n--- Generating the answer to your question...", end='');
-            print ("   (this may take awhile without a big GPU)")
-            response = converse(next_question, history, pyaudio_handler, pyaudio_stream)
+                print("\n--- Generating the answer to your question...\n", end='', flush=True);
+            print("   (this may take awhile without a big GPU)")
 
-            ## User Question
+            ## Queue prompt
+            prompt_queue.put([next_question, history, pyaudio_handler, pyaudio_stream])
+
+            ## Wait for response
+            response = ""
+            while True:
+                text = output_queue.get()
+                response = text + response
+                ## audio / text output
+                if text == 'STOP':
+                    break
+                if text != "":
+                    print("%s" % text, end='', flush=True)
+                else:
+                    print("Nothing on output", flush=True)
+            print("\nEND", flush=True)
+
+            ## Story User Question in History
             history.append(ChatCompletionMessage(
                     role="user",
                     content="%s" % next_question,
