@@ -197,7 +197,7 @@ def uromanize(input_string, uroman_path):
     """Convert non-Roman strings to Roman using the `uroman` perl package."""
     script_path = "uroman.pl"
     if uroman_path != "":
-        script_path = os.path.join(uroman_path, "uroman.pl")
+        script_path = os.path.join(uroman_path, "bin/uroman.pl")
 
     command = ["perl", script_path]
 
@@ -604,11 +604,15 @@ if __name__ == "__main__":
             except Exception as e:
                 print("Error with url retrieval:", e)
 
+            prompt_context = ""
+            if len(context) != "":
+                prompt_context = "\nContext:%s\n" % context
+
             prompt = "Use the Chat History and 'Context: <context>' section below if it has related information to help answer the question or tell the story requested. You are %s who is %s Use the Context as inspiration and references for your answers. Do not reveal that you are using the context, it is not part of the question but a document retrieved in relation to the questions.\n%s%s" % (
                     args.ainame,
                     args.aipersonality,
                     args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
-                    args.promptcompletion.replace('{user_question}', next_question).replace('{context}', "\nContext:%s\n" % context))
+                    args.promptcompletion.replace('{user_question}', next_question).replace('{prompt_context}', context))
 
             if args.debug:
                 print("\n--- Using Prompt:\n---\n%s\n---\n" % prompt)
@@ -616,7 +620,7 @@ if __name__ == "__main__":
             ## User Question
             messages.append(ChatCompletionMessage(
                     role="user",
-                    content="%s" % prompt,
+                    content="%s" % next_question,
                 ))
 
             # Generate the Answer
