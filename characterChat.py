@@ -399,7 +399,7 @@ def speak_line(line):
     ## Romanize
     romanized_aitext = ""
     try:
-        uroman_path = ""
+        uroman_path = "uroman"
         if "UROMAN" in os.environ:
             uroman_path = os.environ["UROMAN"]
         if args.romanize:
