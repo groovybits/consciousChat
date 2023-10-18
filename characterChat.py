@@ -34,6 +34,8 @@ import sqlite3
 from urllib.parse import urlparse
 import urllib3
 import threading
+import signal
+import sys
 
 ## Quiet operation, no warnings
 logger.basicConfig(level=logger.ERROR)
@@ -46,10 +48,12 @@ warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 #speak_queue_lock = threading.Lock()
 #image_queue_lock = threading.Lock()
 
+exit_now = False
+
 def image_worker():
-    while True:
+    while not exit_now:
         image_prompt = image_queue.get()
-        if image_prompt == 'STOP':
+        if exit_now or image_prompt == 'STOP':
             break;
 
 def speak_worker():
@@ -57,7 +61,7 @@ def speak_worker():
     buffer_list = []
     buffer_sent = False  # flag to track if the buffer has been sent to the player
 
-    while True:
+    while not exit_now:
         line = speak_queue.get()
         if line == "":
             continue
@@ -91,9 +95,14 @@ def speak_worker():
         buffer_sent = False  # reset the flag for the next iteration
 
 def audio_worker():
+    ## PyAudio stream and handler
+    pyaudio_stream = None
+    pyaudio_handler = None
+    pyaudio_handler = pyaudio.PyAudio()
+
     audio_stopped = False
     text_stopped = False
-    while True:
+    while not exit_now:
         text = text_queue.get()
         audio = audio_queue.get()
         if audio == 'STOP':
@@ -106,7 +115,29 @@ def audio_worker():
         if audio != "":
             audiobuf = io.BytesIO(audio)
             if audiobuf:
-                speak_wave(audiobuf, pyaudio_handler, pyaudio_stream)
+                ## Speak WAV TTS Output
+                wave_obj = wave.open(audiobuf)
+                ## Check if we have initialized the audio
+                if pyaudio_stream == None:
+                    pyaudio_stream = pyaudio_handler.open(format=pyaudio_handler.get_format_from_width(wave_obj.getsampwidth()),
+                                    channels=wave_obj.getnchannels(),
+                                    rate=wave_obj.getframerate(),
+                                    output=True)
+
+                ## Read and Speak
+                while not exit_now:
+                    audiodata = wave_obj.readframes(1024)
+                    if not audiodata:
+                        break
+                    pyaudio_stream.write(audiodata)
+
+    ## Stop and cleanup speaking TODO keep this open
+    if pyaudio_stream:
+        pyaudio_stream.stop_stream()
+        pyaudio_stream.close()
+        if pyaudio_handler:
+            pyaudio_handler.terminate()
+
 
 def summarize_documents(documents):
     """
@@ -372,44 +403,24 @@ def encode_line(line):
     return buf
 
 
-## Speak WAV Files
-def speak_wave(buf, pyaudio_handler, pyaudio_stream):
-    ## Speak TTS Output
-    wave_obj = wave.open(buf)
-    if (pyaudio_handler == None):
-        pyaudio_handler = pyaudio.PyAudio()
-        pyaudio_stream = pyaudio_handler.open(format=pyaudio_handler.get_format_from_width(wave_obj.getsampwidth()),
-                        channels=wave_obj.getnchannels(),
-                        rate=wave_obj.getframerate(),
-                        output=True)
-
-    ## Read and Speak
-    while True:
-        data = wave_obj.readframes(1024)
-        if not data:
-            break
-        pyaudio_stream.write(data)
-
 ## AI Conversation
 def prompt_worker():
-    while True:
+    while not exit_now:
         request = []
         question = ""
         messages = []
-        pyaudio_handler = None
-        pyaudio_stream = None
-        while True:
-            ## prompt_queue.put([next_question, history, pyaudio_handler, pyaudio_stream])
+        while not exit_now:
             request = prompt_queue.get()
-            if len(request) == 4 and request[0] != "":
+            if 'question' in request and 'history' in request:
                 # extract our variables 
-                question, messages, pyaudio_handler, pyaudio_stream = request
+                question = request['question']
+                messages = request['history']
                 break;
             else:
-                print("prompt_worker(): Got back queue packet", request)
+                print("\n--- prompt_worker(): Got back queue packet: ", request)
                 continue
 
-        if request[0] == 'STOP':
+        if question == 'STOP':
             output_queue.put('STOP')
             break
 
@@ -476,23 +487,24 @@ def prompt_worker():
         output_queue.put('STOP')
 
 def cleanup():
-    ## Stop and cleanup speaking TODO keep this open
-    if not args.silent and pyaudio_stream:
-        pyaudio_stream.stop_stream()
-        pyaudio_stream.close()
-        if pyaudio_handler:
-            pyaudio_handler.terminate()
-
     # When you're ready to exit the program:
     speak_queue.put("STOP")
     text_queue.put("STOP")
     image_queue.put("STOP")
     output_queue.put("STOP")
     prompt_queue.put("STOP")
-    speak_thread.join()  # Wait for the speaking thread to finish
-    image_thread.join()  # Wait for the image thread to finish
-    audio_thread.join()  # Wait for the audio thread to finish
-    prompt_thread.join()  # Wait for the prompt thread to finish
+    exit_now = True
+
+def signal_handler(sig, frame):
+    try:
+        print("\nYou pressed Ctrl+C! Exiting gracefully...")
+        cleanup()
+        sys.exit(1)
+    except Exception as e:
+        pass
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 ## Main
 if __name__ == "__main__":
@@ -603,12 +615,9 @@ if __name__ == "__main__":
     user_speaking_rate = args.userspeakingrate
     user_noise_scale = args.usernoisescale
 
-    ## PyAudio stream and handler
-    pyaudio_stream = None
-    pyaudio_handler = None
-
     if not args.silent:
         aimodel = VitsModel.from_pretrained(facebook_model)
+        aimodel = aimodel
         aitokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)
         aimodel.speaking_rate = ai_speaking_rate
         aimodel.noise_scale = ai_noise_scale
@@ -665,7 +674,7 @@ if __name__ == "__main__":
         )
     ]
 
-    while True:
+    while not exit_now:
         next_question = ""
 
         try:
@@ -777,11 +786,11 @@ if __name__ == "__main__":
             print("   (this may take awhile without a big GPU)")
 
             ## Queue prompt
-            prompt_queue.put([next_question, history, pyaudio_handler, pyaudio_stream])
+            prompt_queue.put({'question': next_question, 'history': history})
 
             ## Wait for response
             response = ""
-            while True:
+            while not exit_now:
                 text = output_queue.get()
                 response = text + response
                 ## audio / text output
@@ -808,5 +817,10 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             print("\n--- Exiting...")
             cleanup()
-            break
+            sys.exit(1)
 
+speak_thread.join()  # Wait for the speaking thread to finish
+image_thread.join()  # Wait for the image thread to finish
+audio_thread.join()  # Wait for the audio thread to finish
+prompt_thread.join()  # Wait for the prompt thread to finish
+sys.exit(0)
