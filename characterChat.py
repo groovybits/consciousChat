@@ -324,6 +324,7 @@ def speak_wave(buf, pyaudio_handler, pyaudio_stream):
 
 ## AI Conversation
 def converse(question, messages, pyaudio_handler, pyaudio_stream):
+    output_tokens = ""
     output = llm.create_chat_completion(
         messages,
         max_tokens=args.maxtokens,
@@ -360,6 +361,7 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
             continue
 
         token = delta['content']
+        output_tokens = "%s%s" % (output_tokens, token)
         sub_tokens = re.split('([ ,.\n?])', token)
         if len(sub_tokens) > 0:
             for sub_token in sub_tokens:
@@ -396,7 +398,7 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
             except Exception as e:
                 print("\n--- Error speaking line!!!:", e)
 
-    return ''.join(tokens).strip()
+    return output_tokens
 
 def cleanup():
     ## Stop and cleanup speaking TODO keep this open
