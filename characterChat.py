@@ -33,12 +33,28 @@ import logging as logger
 import sqlite3
 from urllib.parse import urlparse
 import urllib3
+import threading
 
 ## Quiet operation, no warnings
 logger.basicConfig(level=logger.ERROR)
 logging.set_verbosity_error()
 warnings.simplefilter(action='ignore', category=Warning)
 warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
+
+def speak_worker():
+    while True:
+        # Get the next sentence from the queue
+        line = speak_queue.get()
+        
+        # If we get a 'STOP' command, we break out of the loop
+        if line == 'STOP':
+            break
+        
+        # Speak the sentence
+        buf = speak_line(line.strip())
+        if buf:
+            speak_wave(buf, pyaudio_handler, pyaudio_stream)  # speak the WAV Audio
+
 
 def summarize_documents(documents):
     """
@@ -377,9 +393,8 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
                         tokens_to_speak = 0
                         if line.strip():  # check if line is not empty
                             spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
-                            buf = speak_line(spoken_line.strip())
-                            if buf:
-                                speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
+                            speak_queue.put(spoken_line)
+
                         tokens = []
         else:
             tokens.append(sub_token)
@@ -392,9 +407,7 @@ def converse(question, messages, pyaudio_handler, pyaudio_stream):
         if line.strip():  # check if line is not empty
             spoken_line = clean_text_for_tts(line)  # clean up the text for TTS
             try:
-                buf = speak_line(spoken_line.strip())
-                if buf:
-                    speak_wave(buf, pyaudio_handler, pyaudio_stream) #speak the WAV Audio
+                speak_queue.put(spoken_line)
             except Exception as e:
                 print("\n--- Error speaking line!!!:", e)
 
@@ -408,6 +421,9 @@ def cleanup():
         if pyaudio_handler:
             pyaudio_handler.terminate()
 
+    # When you're ready to exit the program:
+    speak_queue.put("STOP")
+    speak_thread.join()  # Wait for the speaking thread to finish
 
 ## Main
 if __name__ == "__main__":
@@ -538,8 +554,10 @@ if __name__ == "__main__":
     llama_embeddings = None
     embedding_function = None
 
-    # TODO Create a queue for lines to be spoken
+    # Create a queue for lines to be spoken
     speak_queue = queue.Queue()
+    speak_thread = threading.Thread(target=speak_worker)
+    speak_thread.start()
 
     ## System role
     messages=[
