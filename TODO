@@ -2,7 +2,6 @@
 
 - History per chat bot with separate LLM model instance
 - Share history between bots
-- Thread off speaking and feed it while we generate text
 - Thread off bots and cooridinate them together
 - More than 2 bots at a time
 - Better speaking, female voice, pitch control
@@ -12,11 +11,13 @@
 - Allow twitch chat users to create a bot for themselves
 - Control of conversation from outside like sims
 - Video stream MpegTS UDP of output, assemble audio/video/text together
-DONE - Web search context injection
-DONE - VectorDB Context injection
 - News Context injection
 - Background Audio music per scene, intro to episode...
 - Shared publishing of video to social media and youtube
 - API serving, possibly multiple modules that work together?
 - web socket control and communication between threads? or python queues
 - Timing metrics and Token usage information on prompt returns.
+
+- DONE!  Thread off speaking and feed it while we generate text
+- DONE!  Web search context injection
+- DONE!  VectorDB Context injection

@@ -27,7 +27,7 @@ This project is licensed under the Apache License.
 
 ## TODO
 
-- Thread the text to speech generation and speaking to allow LLM text generation simultaneously for more efficient usage and speed asyncronously.
+- DONE! Thread the text to speech generation and speaking to allow LLM text generation simultaneously for more efficient usage and speed asyncronously.
 - Prompt template usage for cleaning up the prompt and making it standard.
 - Document retrieval from PDFs, Json, Text files for Context injection.
 - Female TTS model voices.
