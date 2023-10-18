@@ -41,20 +41,41 @@ logging.set_verbosity_error()
 warnings.simplefilter(action='ignore', category=Warning)
 warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 
+# Define a lock for thread safety
+buffer_lock = threading.Lock()
+
 def speak_worker():
+    speaking_buffer_text = ""
+    buffer_list = []
     while True:
         # Get the next sentence from the queue
         line = speak_queue.get()
-        
+
         # If we get a 'STOP' command, we break out of the loop
         if line == 'STOP':
             break
-        
-        # Speak the sentence
-        buf = speak_line(line.strip())
-        if buf:
-            speak_wave(buf, pyaudio_handler, pyaudio_stream)  # speak the WAV Audio
+        with buffer_lock:
+            # Only send the new line to speak_line
+            buf = speak_line(line)
+            if buf is not None:
+                buffer_list.append(buf)
+                speaking_buffer_text = "%s%s" % (speaking_buffer_text, line)
+            else:
+                # Handle the error or log the issue. Here, I'm just printing an error message.
+                print("Error: speak_line returned None.")
 
+        # Speak the sentences
+        if len(speaking_buffer_text) > args.tokenstospeak:
+            with buffer_lock:
+                # Combine all buffers into one continuous audio stream
+                combined_buffer = io.BytesIO()
+                for audio_buf in buffer_list:
+                    combined_buffer.write(audio_buf.getvalue())
+                combined_buffer.seek(0)
+
+                speak_wave(combined_buffer, pyaudio_handler, pyaudio_stream)  # speak the combined WAV Audio
+                buffer_list.clear()  # Clear the list after playing the audio
+                speaking_buffer_text = ""  # Clear the accumulated text after playing the audio
 
 def summarize_documents(documents):
     """
@@ -278,10 +299,10 @@ def get_user_input():
 def speak_line(line):
     if args.silent:
         return None
-    if not line:
+    if not line or line == "":
         return None
     if args.debug:
-        print("\n--- Speaking line with TTS...\n")
+        print("\n--- Speaking line with TTS...\n --- ", line)
 
     ## Numbers to Words
     aitext = convert_numbers_to_words(line)
@@ -490,18 +511,31 @@ if __name__ == "__main__":
     parser.add_argument("-ews", "--embeddingwindowsize", type=int, default=256, help="Document embedding window size, default 256.")
     parser.add_argument("-ewo", "--embeddingwindowoverlap", type=int, default=25, help="Document embedding window overlap, default 25.")
     parser.add_argument("-eds", "--embeddingdocsize", type=int, default=4096, help="Document embedding window overlap, default 4096.")
+    parser.add_argument("-hctx", "--historycontext", type=int, default=0, help="Document embedding window overlap, default 4096.")
 
     args = parser.parse_args()
 
+	## Adjust history context to context size of LLM
+    if args.historycontext == 0:
+        args.historycontext = args.context
+
+    ## we can't have more history than LLM context
+    if args.historycontext > args.context:
+        args.historycontext = args.context
+
+	## TTS seed to choose random voice behavior
     if args.ttsseed > 0:
         set_seed(args.ttsseed)
 
+	## auto generate a conversation
     if args.autogenerate:
         args.stoptokens = ""
 
+	## Lots of debuggin
     if args.doubledebug:
         args.debug = True
 
+	## setup episode mode
     if args.episode:
         args.roleenforcer = "%s Format the output like a TV episode script using markdown.\n" % args.roleenforcer
         args.roleenforcer.replace('Answer the question asked by', 'Create a story from the plotline given by')
@@ -609,7 +643,7 @@ if __name__ == "__main__":
 
                     # Initialize summarization pipeline for summarizing Documents retrieved
                     summarizer = None
-                    if args.summarizedocs:
+                    if args.summarizedocs and summarize == None:
                         summarizer = pipeline("summarization")
 
                     docs = gethttp(url, next_question, llama_embeddings, args.persistdirectory)
@@ -641,13 +675,26 @@ if __name__ == "__main__":
             if args.debug:
                 print("\n--- Using Prompt:\n---\n%s\n---\n" % prompt)
 
-            history = messages
+            history = messages.copy()
 
             ## User Question
             history.append(ChatCompletionMessage(
                     role="user",
                     content="%s" % prompt,
                 ))
+
+            if args.debug:
+                print("\n\nChat History:", history)
+
+            # Calculate the total length of all messages in history
+            total_length = sum([len(msg['content']) for msg in history])
+
+            # Cleanup history messages
+            while total_length > args.historycontext:
+                # Remove the oldest message after the system prompt
+                if len(history) > 2:
+                    total_length -= len(history[1]['content'])
+                    del history[1]
 
             # Generate the Answer
             if args.episode:
@@ -669,8 +716,6 @@ if __name__ == "__main__":
                     content="%s" % response,
                 ))
 
-            if args.debug:
-                print("\n\nChat History:", messages)
         except KeyboardInterrupt:
             print("\n--- Exiting...")
             cleanup()
