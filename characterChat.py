@@ -54,6 +54,9 @@ load_dotenv()
 
 LOGLEVEL = logger.DEBUG
 
+## History of chat
+messages = []
+
 log_id = uuid.uuid4().hex
 logger.basicConfig(filename=f"logs/gaib-{log_id}.log", level=LOGLEVEL)
 
@@ -633,7 +636,7 @@ class AiTwitchBot(commands.Cog):
         cursor = db_conn.cursor()
         cursor.execute("SELECT * FROM chats WHERE user = ? ORDER BY timestamp DESC LIMIT 1", (ctx.author.name,))
         dbdata = cursor.fetchone()
-        history = []
+        history = messages.copy()
         if dbdata is not None:
             logger.info(f"{ctx.author.name} has a chat history, retrieving it.");
             # create a chat object from the db data 
@@ -651,7 +654,7 @@ class AiTwitchBot(commands.Cog):
         # send the message to the prompt queue
         request = {'question': f"{ctx.author.name} asked {current_name} the question {ctx.content}", 'history': history}
         prompt_queue.put(request)
-    
+
     # set the personality of the bot
     @commands.command(name="personality")
     async def personality(ctx):
@@ -725,16 +728,6 @@ def prompt_worker():
         #time.sleep(0.1)
         request = []
         question = ""
-        ## System role
-        messages = [
-            ChatCompletionMessage(
-                # role="user",
-                role="system",
-                content="You are %s who is %s." % (
-                    args.ainame,
-                    args.aipersonality),
-            )
-        ]
 
         while not exit_now:
             #time.sleep(0.1)
@@ -742,7 +735,7 @@ def prompt_worker():
             if 'question' in request and 'history' in request:
                 # extract our variables 
                 question = request['question']
-                messages = request['history']
+                user_messages = request['history']
                 break;
             else:
                 logger.debug("--- prompt_worker(): Got back queue packet: %s" % json.dumps(request))
@@ -753,7 +746,7 @@ def prompt_worker():
             break
 
         output = llm.create_chat_completion(
-            messages,
+            messages=user_messages,
             max_tokens=args.maxtokens,
             temperature=args.temperature,
             stream=True,
@@ -1154,22 +1147,16 @@ if __name__ == "__main__":
     ## LLM Model for Text TODO are setting gpu layers good/necessary?
     llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
-    # Create threads
-    speak_thread = threading.Thread(target=speak_worker)
-    speak_thread.start()
-    audio_thread = threading.Thread(target=audio_worker)
-    audio_thread.start()
-    image_thread = threading.Thread(target=image_worker)
-    image_thread.start()
-    prompt_thread = threading.Thread(target=prompt_worker)
-    prompt_thread.start()
-    if args.twitch:
-        twitch_thread = threading.Thread(target=twitch_worker)
-        twitch_thread.start()
-
-    # Start the wxPython app in a separate thread
-    #wx_thread = threading.Thread(target=start_wx_app)
-    #wx_thread.start()
+    ## System role
+    messages = [
+        ChatCompletionMessage(
+            # role="user",
+            role="system",
+            content="You are %s who is %s." % (
+                args.ainame,
+                args.aipersonality),
+        )
+    ]
 
     ## AI TTS Model for Speech
     ai_speaking_rate = args.aispeakingrate
@@ -1204,6 +1191,23 @@ if __name__ == "__main__":
 
     # Run Terminal Loop
     try:
+        # Create threads
+        speak_thread = threading.Thread(target=speak_worker)
+        speak_thread.start()
+        audio_thread = threading.Thread(target=audio_worker)
+        audio_thread.start()
+        image_thread = threading.Thread(target=image_worker)
+        image_thread.start()
+        prompt_thread = threading.Thread(target=prompt_worker)
+        prompt_thread.start()
+        if args.twitch:
+            twitch_thread = threading.Thread(target=twitch_worker)
+            twitch_thread.start()
+
+        # Start the wxPython app in a separate thread
+        #wx_thread = threading.Thread(target=start_wx_app)
+        #wx_thread.start()
+
         #curses.wrapper(main)
         main("main")
     except Exception as e:
