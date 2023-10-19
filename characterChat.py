@@ -35,22 +35,50 @@ import sqlite3
 from urllib.parse import urlparse
 import urllib3
 import threading
+import time
 import signal
 import sys
 import wx
 from PIL import Image
 from tqdm import tqdm
 import uuid
+import psutil
+import wx
+#import curses
+import functools
+
+LOGLEVEL = logger.DEBUG
+
+log_id = uuid.uuid4().hex
+logger.basicConfig(filename=f"logs/gaib-{log_id}.log", level=LOGLEVEL)
+
+# Get the virtual memory status
+vm = psutil.virtual_memory()
 
 tqdm.disable = True
 
 ## Quiet operation, no warnings
-logger.basicConfig(level=logger.ERROR)
 logging.set_verbosity_error()
 warnings.simplefilter(action='ignore', category=Warning)
 warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 from urllib3.exceptions import NotOpenSSLWarning
 warnings.simplefilter(action='ignore', category=NotOpenSSLWarning)
+
+## TTS Models
+aimodel = None
+usermodel = None
+
+## Text embeddings, enable only if needed
+llama_embeddings = None
+embedding_function = None
+
+# Create a queue for lines to be spoken
+speak_queue = queue.Queue()
+audio_queue = queue.Queue()
+image_queue = queue.Queue()
+text_queue = queue.Queue()
+output_queue = queue.Queue()
+prompt_queue = queue.Queue()
 
 # Define a lock for thread safety
 #audio_queue_lock = threading.Lock()
@@ -59,17 +87,10 @@ warnings.simplefilter(action='ignore', category=NotOpenSSLWarning)
 
 exit_now = False
 
-pipe = DiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5")
-pipe = pipe.to("mps")
-# Recommended if your computer has < 64 GB of RAM
-#pipe.enable_attention_slicing()
-# First-time "warmup" pass if PyTorch version is 1.13 (see explanation above)
-#_ = pipe(prompt, num_inference_steps=1)
-
 class ImageHistory:
     def __init__(self):
         self.images = []
-        
+
     def add_image(self, pil_image, prompt):
         # Store in the data structure
         image_data = {"image": pil_image, "prompt": prompt}
@@ -79,53 +100,120 @@ class ImageHistory:
         id = uuid.uuid4().hex
         filename = "".join([c for c in prompt if c.isalpha() or c.isdigit() or c in (' ', '.')])
         filename = "_".join(filename.split())
+        filename = filename[:30]
         filepath = os.path.join("saved_images", f"{filename}_{id}.png")
-        
+
         # Save to disk
         pil_image.save(filepath)
+        return "%s/%s" % (filepath, filename)
 
-# Create the main wx App
+class ImageFrame(wx.Frame):
+    def __init__(self, title):
+        super().__init__(None, title=title, size=(512, 512))
+        
+        self.panel = wx.Panel(self)
+        self.image_widget = wx.StaticBitmap(self.panel)
+        
+        self.sizer = wx.BoxSizer(wx.VERTICAL)
+        self.sizer.Add(self.image_widget, 1, wx.ALL | wx.EXPAND, 5)
+        self.panel.SetSizer(self.sizer)
+        
+        self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.Show()
+
+    def update_image(self, pil_image):
+        wx_image = wx.Image(pil_image.size[0], pil_image.size[1])
+        wx_image.SetData(pil_image.tobytes())
+        wx_bitmap = wx.Bitmap(wx_image)
+        
+        self.image_widget.SetBitmap(wx_bitmap)
+        self.sizer.Layout()  # Update the layout to adjust to the new image
+
+    def on_close(self, event):
+        # Handle the close event
+        self.Destroy()
+
+    def on_paint(self, event=None):
+        dc = wx.PaintDC(self)
+        # Get the last image from the history
+        if image_history.images:
+            pil_image = image_history.images[-1]["image"]
+            wx_image = self.pil_to_wx(pil_image)
+            
+            # Calculate the center for the image
+            width, height = self.GetSize()
+            img_width, img_height = pil_image.size
+            x = (width - img_width) // 2
+            y = (height - img_height) // 2
+
+            dc.DrawBitmap(wx.Bitmap(wx_image), x, y, True)
+
+    def pil_to_wx(self, pil_image):
+        wx_image = wx.Image(pil_image.size[0], pil_image.size[1])
+        wx_image.SetData(pil_image.tobytes())
+        return wx_image
+
+    def update_display(self):
+        # This will trigger the on_paint event
+        self.Refresh()
+
 class ImageApp(wx.App):
-    def __init__(self, image_history):
-        super().__init__(False)
-        self.frame = wx.Frame(None, wx.ID_ANY, "Image Display")
-        self.panel = wx.Panel(self.frame)
-        self.image_history = image_history
-
-    def on_run(self):
-        # Display the last image from the image_history
-        if self.image_history.images:
-            pil_image = self.image_history.images[-1]["image"]
-            wx_image = wx.Image(pil_image.size[0], pil_image.size[1])
-            wx_image.SetData(pil_image.tobytes())
-            wx.BitmapFromImage(wx_image)
-
+    def __init__(self, title="GAIB 2.0"):
+        super().__init__()
+        self.frame = ImageFrame(title)
         self.frame.Show()
-        self.MainLoop()
+
+    def update_image(self, pil_image):
+        self.frame.update_image(pil_image)
 
 image_history = ImageHistory()
 
+def image_to_ascii(image, width):
+    image = image.resize((width, int((image.height/image.width) * width * 0.55)), Image.LANCZOS)
+    image = image.convert('L')  # Convert to grayscale
+
+    pixels = list(image.getdata())
+    ascii_chars = ["@", "#", "S", "%", "?", "*", "+", ";", ":", ",", "."]
+    ascii_image = [ascii_chars[pixel//25] for pixel in pixels]
+    ascii_image = ''.join([''.join(ascii_image[i:i+width]) + '\n' for i in range(0, len(ascii_image), width)])
+    return ascii_image
+
 def image_worker():
     while not exit_now:
+        #time.sleep(0.1)
         image_prompt = image_queue.get()
         if exit_now or image_prompt == 'STOP':
-            break;
+            break
         else:
-            image = pipe(image_prompt,
-                         height = 512,
-                         width=512,
-                         num_inference_steps = 50,
-                         guidance_scale = 7.5,
-                         num_images_per_prompt = 1
-                    ).images[0]
-            print("Stable Diffusion got an image: ", image)
-            
-            # Store the image in the history and save to disk
-            image_history.add_image(image, image_prompt)
+            # First-time "warmup" pass if PyTorch version is 1.13 (see explanation above)
+            version = [int(v) for v in torch.__version__.split(".")]
 
-            # Display the image
-            app = ImageApp(image_history)
-            app.on_run()
+            # Check if version is less than 1.13
+            if version[0] == 1 and version[1] < 13:
+                _ = pipe(prompt, num_inference_steps=1)
+
+            image = pipe(image_prompt,
+                         height=512,
+                         width=512,
+                         num_inference_steps=50,
+                         guidance_scale=7.5,
+                         num_images_per_prompt=1
+                    ).images[0]
+
+            # Store the image in the history and save to disk
+            imgname = image_history.add_image(image, image_prompt)
+            logger.debug("--- Image History: %s" % imgname)
+
+            print("\n--- Stable Diffusion got an image: %s\n" % imgname)
+
+            ## ASCII Printout of Image
+            #stdscr.refresh()  # Refresh the screen to show changes
+            print(image_to_ascii(image, 50))
+            #stdscr.refresh()  # Refresh the screen to show changes
+            # Update the image in the app
+            #app.frame.update_display()
+            #app.update_image(image)
+
 
 def speak_worker():
     encoding_buffer_text = ""
@@ -133,6 +221,7 @@ def speak_worker():
     buffer_sent = False  # flag to track if the buffer has been sent to the player
 
     while not exit_now:
+        #time.sleep(0.1)
         line = speak_queue.get()
         if line == "":
             continue
@@ -174,9 +263,10 @@ def audio_worker():
     audio_stopped = False
     text_stopped = False
     while not exit_now:
+        #time.sleep(0.1)
         text = text_queue.get()
         audio = audio_queue.get()
-        image_queue.put(text)
+
         if audio == 'STOP':
             audio_stopped = True
         if text == 'STOP':
@@ -185,6 +275,13 @@ def audio_worker():
             output_queue.put('STOP')
             image_queue.put('STOP')
             break ## Finished with Text and Audio generation output
+
+        ## Image Queue for text
+        image_queue.put(text)
+        ## Output text to sync if requested
+        if not args.nosync:
+            output_queue.put(text)
+
         if audio != "":
             audiobuf = io.BytesIO(audio)
             if audiobuf:
@@ -199,6 +296,7 @@ def audio_worker():
 
                 ## Read and Speak
                 while not exit_now:
+                    #time.sleep(0.1)
                     audiodata = wave_obj.readframes(1024)
                     if not audiodata:
                         break
@@ -282,10 +380,10 @@ def extract_urls(text):
 
 def gethttp(url, question, llama_embeddings, persistdirectory):
     if url == "" or url == None:
-        print("--- Error: URL is empty for gethttp()")
+        print("\n--- Error: URL is empty for gethttp()")
         return []
     if question == "":
-        print("--- Error: Question is empty for gethttp()")
+        print("\n--- Error: Question is empty for gethttp()")
         return []
 
     # Parse the URL to get a safe directory name
@@ -294,7 +392,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
     url_directory = os.path.join(persistdirectory, url_directory)
 
     if args.debug:
-        print("gethttp() parsed URL {url}:", parsed_url)
+        logger.info("--- gethttp() parsed URL {url}:", parsed_url)
 
     # Create the directory if it does not exist
     if not os.path.exists(url_directory):
@@ -314,21 +412,20 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
 
     ## Check if we have already ingested this url into the vector DB
     if dbdata is not None:
-        print(f"\n--- URL {url} has already been processed.")
+        logger.info(f"--- URL {url} has already been processed.")
         db_conn.close()
         try:
             vdb = Chroma(persist_directory=url_directory, embedding_function=llama_embeddings)
             docs = vdb.similarity_search(question)
 
             db_conn.close() ## Close DB
-            if args.debug:
-                print("--- gethttp() Found vector embeddings for {url}, returning them...", docs)
+            logger.info("--- gethttp() Found vector embeddings for {url}, returning them...", docs)
             return docs;
         except Exception as e:
             print("\n--- Error: Looking up embeddings for {url}:", e)
     else:
-        if args.debug:
-            print(f"\n--- URL {url} has not been seen, ingesting into vector db...")
+        logger.info(f"--- New URL {url}, ingesting into vector db...")
+        print(f"\n--- New URL {url}, ingesting into vector db...")
 
     ## Close SQL Light DB Connection
     db_conn.close()
@@ -354,8 +451,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
 
     ## Only save if we found something
     if len(docs) > 0:
-        if args.debug:
-            print("Retrieved documents from Vector DB:", docs)
+        logger.debug("Retrieved documents from Vector DB:", docs)
         db_conn = sqlite3.connect(args.urlsdb)
         ## Save url into db
         db_conn.execute("INSERT INTO urls (url) VALUES (?)", (url,))
@@ -436,8 +532,7 @@ def encode_line(line):
         return None
     if not line or line == "":
         return None
-    if args.debug:
-        print("\n--- Speaking line with TTS...\n --- ", line)
+    logger.debug("--- Speaking line with TTS... --- %s" % line)
 
     ## Numbers to Words
     aitext = convert_numbers_to_words(line)
@@ -451,8 +546,9 @@ def encode_line(line):
             romanized_aitext = uromanize(aitext, uroman_path=uroman_path)
             aitext = romanized_aitext
             if args.debug:
-                print("\n--- Romanized Text: %s" % romanized_aitext)
+                logger.debug("--- Romanized Text: %s" % romanized_aitext)
     except Exception as e:
+        logger.error("--- Error romanizing input:", e)
         print("\n--- Error romanizing input:", e)
 
     ## Tokenize
@@ -479,10 +575,12 @@ def encode_line(line):
 ## AI Conversation
 def prompt_worker():
     while not exit_now:
+        #time.sleep(0.1)
         request = []
         question = ""
         messages = []
         while not exit_now:
+            #time.sleep(0.1)
             request = prompt_queue.get()
             if 'question' in request and 'history' in request:
                 # extract our variables 
@@ -490,7 +588,7 @@ def prompt_worker():
                 messages = request['history']
                 break;
             else:
-                print("\n--- prompt_worker(): Got back queue packet: ", request)
+                logger.debug("--- prompt_worker(): Got back queue packet: %s" % json.dumps(request))
                 continue
 
         if question == 'STOP':
@@ -516,45 +614,48 @@ def prompt_worker():
 
         for item in output:
             if args.doubledebug:
-                print("--- Got Item: %s\n" % json.dumps(item))
+                logger.debug("--- Got Item: %s" % json.dumps(item))
 
             delta = item["choices"][0]['delta']
             if 'role' in delta:
                 if args.debug:
-                    print(f"\n--- Found Role: {delta['role']}: ")
+                    logger.debug(f"--- Found Role: {delta['role']}: ")
                 role = delta['role']
 
             # Check if we got a token
             if 'content' not in delta:
                 if args.doubledebug:
-                     print(f"--- Skipping lack of content: {delta}")
+                     logger.error(f"--- Skipping lack of content: {delta}")
                 continue
             token = delta['content']
             accumulator.append(token)
             token_count += 1
             tokens_to_speak += 1
 
-            output_queue.put(token)
+            if args.nosync:
+                output_queue.put(token)
 
             sub_tokens = re.split('([ ,.\n?])', token)
             for sub_token in sub_tokens:
                 if sub_token in speaktokens and tokens_to_speak >= args.tokenstospeak:
                     line = ''.join(accumulator)
                     if line.strip():  # check if line is not empty
-                        spoken_line = line #clean_text_for_tts(line)
-                        speak_queue.put(spoken_line)
-                        accumulator.clear()  # Clear the accumulator after sending to speak_queue
-                        tokens_to_speak = 0  # Reset the counter
-                        break;
+                        spoken_line = clean_text_for_tts(line)
+                        if spoken_line.strip():  # check if line is not empty
+                            speak_queue.put(spoken_line)
+                            accumulator.clear()  # Clear the accumulator after sending to speak_queue
+                            tokens_to_speak = 0  # Reset the counter
+                            break;
 
         # Check if there are any remaining tokens in the accumulator after processing all tokens
         if accumulator:
             line = ''.join(accumulator)
             if line.strip():
-                spoken_line = line #clean_text_for_tts(line)
-                speak_queue.put(spoken_line)
-                accumulator.clear()  # Clear the accumulator after sending to speak_queue
-                tokens_to_speak = 0  # Reset the counter
+                spoken_line = clean_text_for_tts(line)
+                if spoken_line.strip():
+                    speak_queue.put(spoken_line)
+                    accumulator.clear()  # Clear the accumulator after sending to speak_queue
+                    tokens_to_speak = 0  # Reset the counter
 
         # Stop the output loop
         output_queue.put('STOP')
@@ -566,20 +667,203 @@ def cleanup():
     image_queue.put("STOP")
     output_queue.put("STOP")
     prompt_queue.put("STOP")
-    exit_now = True
+    #exit_now = True
 
 def signal_handler(sig, frame):
     try:
-        print("\nYou pressed Ctrl+C! Exiting gracefully...")
+        global exit_flag
+        exit_flag = True
+        sys.stdout.flush()
+        print("\n\nYou pressed Ctrl+C! Exiting gracefully...\n")
+        logger.error("\n\nYou pressed Ctrl+C! Exiting gracefully...\n")
         cleanup()
         sys.exit(1)
     except Exception as e:
-        pass
+        sys.exit(1)
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-## Main
+# wxPython main loop
+#def start_wx_app():
+#   app.MainLoop()
+
+## Main worker thread
+def main(stdscr):
+    """
+    curses.echo()
+    # Enable keypad input
+    stdscr.keypad(True)
+    # Set up the screen
+    stdscr.clear()
+    #stdscr.refresh()
+    stdscr.addstr(0, 0, "GAIB is starting up...\n")
+    """
+    print('\033c', end='')
+    print("GAIB Is starting up...\n")
+
+    ### Main Loop
+    next_question = ""
+    while not exit_now:
+        #time.sleep(0.1)
+        next_question = ""
+
+        try:
+            ## Did we get a question to start off with on input?
+            if (args.autogenerate):
+                # auto-generate prompts for 24/7 generation
+                user_input = "Continue on with the discussion"
+            elif (args.question == ""):
+                ## Episode or Question
+                """
+                if args.episode:
+                    #stdscr.addstr(0, 0, "Episode Title and Plotline: ")
+                    print("Episode Title and Plotline: ", flush=True, end='')
+                else:
+                    #stdscr.addstr(0, 0, "Question: ")
+                    print("Question: ", flush=True, end='')
+                """
+                """
+                ## Get user input
+                user_input = stdscr.getstr().decode('utf-8')
+
+                # Process user input
+                if user_input.lower() == 'exit':
+                    break  # Exit the loop if 'exit' is typed
+                """
+                user_input = get_user_input()
+                next_question = user_input
+            else:
+                next_question = args.question
+                args.question = ""
+
+            logger.debug("\n--- Next Question: %s" % next_question)
+
+            urls = extract_urls(next_question)
+            context = ""
+            if len(urls) <= 0:
+                if args.debug:
+                    logger.debug("--- Found no URLs in prompt")
+
+            ## URL in prompt parsing
+            try:
+                for url in urls:
+                    url = url.strip(",.;:")
+                    if args.debug:
+                        logger.debug("--- Found URL {url} in prompt input.")
+
+                    if llama_embeddings == None:
+                        llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
+                                                              n_ctx=args.embeddingscontext, verbose=args.doubledebug,
+                                                              n_gpu_layers=args.gpulayers)
+
+                    # Initialize summarization pipeline for summarizing Documents retrieved
+                    summarizer = None
+                    if args.summarizedocs and summarize == None:
+                        summarizer = pipeline("summarization")
+
+                    docs = gethttp(url, next_question, llama_embeddings, args.persistdirectory)
+                    if args.debug:
+                        logger.info("--- GetHTTP found {url} with %d docs" % len(docs))
+                    if len(docs) > 0:
+                        if args.summarizedocs:
+                            parsed_output = summarize_documents(docs) # parse_documents gets more information with less precision
+                        else:
+                            parsed_output = parse_documents(docs)
+                        context = "%s" % (parsed_output.strip().replace("\n", ', '))
+            except Exception as e:
+                logger.error("\n--- Error with url retrieval:", e)
+
+            ## Context inclusion if we have vectorDB results
+            prompt_context = ""
+            if context != "":
+                prompt_context = "Context:%s\n" % context
+
+            ## Prompt parts
+            instructions = "Use the Chat History and 'Context: <context>' section below if it has related information to help answer the question or tell the story requested."
+            role = "Do not reveal that you are using the context, it is not part of the question but a document retrieved in relation to the questions."
+            purpose = "Use the Context as inspiration and references for your answers."
+
+            ## Build prompt
+            prompt = "%s You are %s who is %s %s %s\n%s%s" % (
+                    instructions,
+                    args.ainame,
+                    args.aipersonality,
+                    purpose,
+                    role,
+                    args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
+                    args.promptcompletion.replace('{user_question}', next_question).replace('{context}', prompt_context))
+
+            logger.debug("--- Using Prompt: %s" % prompt)
+
+            history = messages.copy()
+
+            ## User Question
+            history.append(ChatCompletionMessage(
+                    role="user",
+                    content="%s" % prompt,
+                ))
+
+            ## History debug output
+            logger.debug("Chat History: %s" % json.dumps(history))
+
+            # Calculate the total length of all messages in history
+            total_length = sum([len(msg['content']) for msg in history])
+
+            # Cleanup history messages
+            while total_length > args.historycontext:
+                # Remove the oldest message after the system prompt
+                if len(history) > 2:
+                    total_length -= len(history[1]['content'])
+                    del history[1]
+
+            # Generate the Answer
+            if args.episode:
+                #stdscr.addstr(0, 0, "Generating an Episode... ")
+                print("Generating an Episode...")
+            else:
+                #stdscr.addstr(0, 0, "Generating an Answer... ")
+                print("Generating an Answer... ")
+
+            ## Queue prompt
+            prompt_queue.put({'question': next_question, 'history': history})
+
+            ## Wait for response
+            response = ""
+            while not exit_now:
+                #time.sleep(0.1)
+                text = output_queue.get()
+                response = text + response
+                ## audio / text output
+                if text == 'STOP':
+                    break
+                if text != "":
+                    ## Print out tokens / text generation
+                    #stdscr.addstr(0, 0, f"{text}")
+                    print(text, end='', flush=True)
+
+            #stdscr.addstr(0, 0, "END OF STREAM")
+            print("END OF STREAM")
+            logger.debug("Response: %s" % response)
+
+            ## Story User Question in History
+            history.append(ChatCompletionMessage(
+                    role="user",
+                    content="%s" % next_question,
+                ))
+
+            ## AI Response History
+            messages.append(ChatCompletionMessage(
+                    role="assistant",
+                    content="%s" % response,
+                ))
+
+        except KeyboardInterrupt:
+            stdscr.addstr(0, 0, "--- Recieved Ctrl+C, Exiting...")
+            logger.error("--- Recieved Ctrl+C, Exiting...")
+            sys.exit(1)
+
+## Dummy for Curses
 if __name__ == "__main__":
     default_ai_name = "Buddha"
     default_human_name = "Human"
@@ -594,7 +878,8 @@ if __name__ == "__main__":
     facebook_model = "facebook/mms-tts-eng"
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-l", "--language", type=str, default="", help="Have output use another language than the default English for text and speech. See the -ro option and uroman.pl program needed.")
+    parser.add_argument("-l", "--language", type=str, default="",
+                        help="Have output use another language than the default English for text and speech. See the -ro option and uroman.pl program needed.")
     parser.add_argument("-pd", "--persistdirectory", type=str, default="vectordb_data",
                         help="Persist directory for Chroma Vector DB used for web page lookups and document analysis.")
     parser.add_argument("-m", "--model", type=str, default=default_model,
@@ -645,8 +930,26 @@ if __name__ == "__main__":
     parser.add_argument("-ewo", "--embeddingwindowoverlap", type=int, default=25, help="Document embedding window overlap, default 25.")
     parser.add_argument("-eds", "--embeddingdocsize", type=int, default=4096, help="Document embedding window overlap, default 4096.")
     parser.add_argument("-hctx", "--historycontext", type=int, default=0, help="Document embedding window overlap, default 4096.")
+    parser.add_argument("-im", "--imagemodel", type=str, default="runwayml/stable-diffusion-v1-5", help="Stable Diffusion Image Model to use.")
+    parser.add_argument("-ns", "--nosync", type=bool, default=False, help="Don't sync the text with the speaking, output realtiem.\n")
 
     args = parser.parse_args()
+
+    ## Stable diffusion image model
+    pipe = DiffusionPipeline.from_pretrained(args.imagemodel)
+
+    # if one wants to set `leave=False`
+    pipe.set_progress_bar_config(leave=False)
+
+    # if one wants to disable `tqdm`
+    pipe.set_progress_bar_config(disable=True)
+
+    ## Mac silicon GPU
+    pipe = pipe.to("mps") # cpu or cuda
+
+    # Recommended if your computer has < 64 GB of RAM
+    if (vm.total / (1024**3)) < 64:
+        pipe.enable_attention_slicing()
 
 	## Adjust history context to context size of LLM
     if args.historycontext == 0:
@@ -679,12 +982,38 @@ if __name__ == "__main__":
     if args.language != "":
         args.promptcompletion = "%s Speak in the %s language" % (args.promptcompletion, args.language)
 
+    ## System role
+    messages=[
+        ChatCompletionMessage(
+            # role="user",
+            role="system",
+            content="You are %s who is %s." % (
+                args.ainame,
+                args.aipersonality),
+        )
+    ]
+
+    ## LLM Model for Text TODO are setting gpu layers good/necessary?
+    llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+
+    # Create threads
+    speak_thread = threading.Thread(target=speak_worker)
+    speak_thread.start()
+    audio_thread = threading.Thread(target=audio_worker)
+    audio_thread.start()
+    image_thread = threading.Thread(target=image_worker)
+    image_thread.start()
+    prompt_thread = threading.Thread(target=prompt_worker)
+    prompt_thread.start()
+
+    # Start the wxPython app in a separate thread
+    #wx_thread = threading.Thread(target=start_wx_app)
+    #wx_thread.start()
+
     ## AI TTS Model for Speech
-    aimodel = None
     ai_speaking_rate = args.aispeakingrate
     ai_noise_scale = args.ainoisescale
 
-    usermodel = None
     user_speaking_rate = args.userspeakingrate
     user_noise_scale = args.usernoisescale
 
@@ -711,189 +1040,18 @@ if __name__ == "__main__":
         else:
             print("\n--- Error user samplingrate is not matching the models of %d" % usermodel.sampling_rate)
 
-    ## LLM Model for Text TODO are setting gpu layers good/necessary?
-    llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+    # Run Terminal Loop
+    try:
+        #curses.wrapper(main)
+        main("main")
+    except Exception as e:
+        logger.error("\n--- Error with program startup curses wrappper: %s" % e)
+    finally:
+        cleanup()
+        speak_thread.join()  # Wait for the speaking thread to finish
+        image_thread.join()  # Wait for the image thread to finish
+        audio_thread.join()  # Wait for the audio thread to finish
+        prompt_thread.join()  # Wait for the prompt thread to finish
 
-    ## Text embeddings, enable only if needed
-    llama_embeddings = None
-    embedding_function = None
-
-    # Create a queue for lines to be spoken
-    speak_queue = queue.Queue()
-    audio_queue = queue.Queue()
-    image_queue = queue.Queue()
-    text_queue = queue.Queue()
-    output_queue = queue.Queue()
-    prompt_queue = queue.Queue()
-
-    # Create threads
-    speak_thread = threading.Thread(target=speak_worker)
-    speak_thread.start()
-    audio_thread = threading.Thread(target=audio_worker)
-    audio_thread.start()
-    image_thread = threading.Thread(target=image_worker)
-    image_thread.start()
-    prompt_thread = threading.Thread(target=prompt_worker)
-    prompt_thread.start()
-
-    ## System role
-    messages=[
-        ChatCompletionMessage(
-            # role="user",
-            role="system",
-            content="You are %s who is %s." % (
-                args.ainame,
-                args.aipersonality),
-        )
-    ]
-
-    while not exit_now:
-        next_question = ""
-
-        try:
-            ## Did we get a question to start off with on input?
-            if (args.question == ""):
-                print("\n\n--- You can press the <Return> key for the output to continue where it last left off.")
-                if args.episode:
-                    print("--- Create your plotline ", end='');
-                else:
-                    print("--- Ask your question ", end='');
-                print("and press the Return key to continue, or Ctrl+C to exit the program.\n")
-
-                next_question = get_user_input()
-                print("", flush=True)
-            else:
-                next_question = args.question
-                args.question = ""
-
-            if args.debug:
-                print("\n--- Next Question: %s" % next_question)
-
-            urls = extract_urls(next_question)
-            context = ""
-            if len(urls) <= 0:
-                if args.debug:
-                    print("--- Found no URLs in prompt")
-
-            try:
-                for url in urls:
-                    url = url.strip(",.;:")
-                    if args.debug:
-                        print("\n--- Found URL {url} in prompt input.")
-
-                    if llama_embeddings == None:
-                        llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
-                                                              n_ctx=args.embeddingscontext, verbose=args.doubledebug,
-                                                              n_gpu_layers=args.gpulayers)
-
-                    # Initialize summarization pipeline for summarizing Documents retrieved
-                    summarizer = None
-                    if args.summarizedocs and summarize == None:
-                        summarizer = pipeline("summarization")
-
-                    docs = gethttp(url, next_question, llama_embeddings, args.persistdirectory)
-                    if args.debug:
-                        print("--- GetHTTP found {url} with %d docs" % len(docs))
-                    if len(docs) > 0:
-                        if args.summarizedocs:
-                            parsed_output = summarize_documents(docs) # parse_documents gets more information with less precision
-                        else:
-                            parsed_output = parse_documents(docs)
-                        context = "%s" % (parsed_output.strip().replace("\n", ', '))
-            except Exception as e:
-                print("Error with url retrieval:", e)
-
-            ## Context inclusion if we have vectorDB results
-            prompt_context = ""
-            if context != "":
-                prompt_context = "Context:%s\n" % context
-
-            if args.debug:
-                print("User Question: %s" % next_question);
-            
-            ## Prompt parts
-            instructions = "Use the Chat History and 'Context: <context>' section below if it has related information to help answer the question or tell the story requested."
-            role = "Do not reveal that you are using the context, it is not part of the question but a document retrieved in relation to the questions."
-            purpose = "Use the Context as inspiration and references for your answers."
-
-            ## Build prompt
-            prompt = "%s You are %s who is %s %s %s\n%s%s" % (
-                    instructions,
-                    args.ainame,
-                    args.aipersonality,
-                    purpose,
-                    role,
-                    args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
-                    args.promptcompletion.replace('{user_question}', next_question).replace('{context}', prompt_context))
-
-            if args.debug:
-                print("\n--- Using Prompt:\n---\n%s\n---\n" % prompt)
-
-            history = messages.copy()
-
-            ## User Question
-            history.append(ChatCompletionMessage(
-                    role="user",
-                    content="%s" % prompt,
-                ))
-
-            ## History debug output
-            if args.debug:
-                print("\n\nChat History:", history)
-
-            # Calculate the total length of all messages in history
-            total_length = sum([len(msg['content']) for msg in history])
-
-            # Cleanup history messages
-            while total_length > args.historycontext:
-                # Remove the oldest message after the system prompt
-                if len(history) > 2:
-                    total_length -= len(history[1]['content'])
-                    del history[1]
-
-            # Generate the Answer
-            if args.episode:
-                print("\n--- Generating an episode from your plotline...\n", end='', flush=True);
-            else:
-                print("\n--- Generating the answer to your question...\n", end='', flush=True);
-            print("   (this may take awhile without a big GPU)")
-
-            ## Queue prompt
-            prompt_queue.put({'question': next_question, 'history': history})
-
-            ## Wait for response
-            response = ""
-            while not exit_now:
-                text = output_queue.get()
-                response = text + response
-                ## audio / text output
-                if text == 'STOP':
-                    break
-                if text != "":
-                    print("%s" % text, end='', flush=True)
-                else:
-                    print("Nothing on output", flush=True)
-            print("\nEND", flush=True)
-
-            ## Story User Question in History
-            history.append(ChatCompletionMessage(
-                    role="user",
-                    content="%s" % next_question,
-                ))
-
-            ## AI Response History
-            messages.append(ChatCompletionMessage(
-                    role="assistant",
-                    content="%s" % response,
-                ))
-
-        except KeyboardInterrupt:
-            print("\n--- Exiting...")
-            cleanup()
-            sys.exit(1)
-
-speak_thread.join()  # Wait for the speaking thread to finish
-image_thread.join()  # Wait for the image thread to finish
-audio_thread.join()  # Wait for the audio thread to finish
-prompt_thread.join()  # Wait for the prompt thread to finish
-sys.exit(0)
+        logger.info("\n=== GAIB The Groovy AI Bot v2...")
+        sys.exit(0)
