@@ -712,6 +712,7 @@ def run_bot():
 ## Twitch Chat Bot
 def twitch_worker():
     #asyncio.run(run_bot(), debug=args.debug)
+    run_bot()
 
     while not exit_now:
         # check if we are connected, if not connect and get channel setup, send a bot message if first time
@@ -860,6 +861,7 @@ def main(stdscr):
 
     ### Main Loop
     next_question = ""
+    have_ran = False
     while not exit_now:
         time.sleep(0.1)
         next_question = ""
@@ -868,8 +870,8 @@ def main(stdscr):
             ## Did we get a question to start off with on input?
             if (args.autogenerate):
                 # auto-generate prompts for 24/7 generation
-                user_input = "Continue on with the discussion"
-            elif (args.question == ""):
+                next_question = "Continue on with the discussion"
+            elif (have_ran or next_question == ""):
                 ## Episode or Question
                 """
                 if args.episode:
@@ -891,7 +893,8 @@ def main(stdscr):
                 next_question = user_input
             else:
                 next_question = args.question
-                args.question = ""
+
+            have_ran = True
 
             logger.debug("\n--- Next Question: %s" % next_question)
 
