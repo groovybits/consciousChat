@@ -46,6 +46,11 @@ import psutil
 import wx
 #import curses
 import functools
+from dotenv import load_dotenv
+from twitchio.ext import commands
+import asyncio
+
+load_dotenv()
 
 LOGLEVEL = logger.DEBUG
 
@@ -57,6 +62,10 @@ vm = psutil.virtual_memory()
 
 tqdm.disable = True
 
+current_personality = ""
+current_name = ""
+chat_db = "db/chat.db"
+
 ## Quiet operation, no warnings
 logging.set_verbosity_error()
 warnings.simplefilter(action='ignore', category=Warning)
@@ -67,6 +76,10 @@ warnings.simplefilter(action='ignore', category=NotOpenSSLWarning)
 ## TTS Models
 aimodel = None
 usermodel = None
+
+## TTS Tokenizers
+aitokenizer = None
+usertokenizer = None
 
 ## Text embeddings, enable only if needed
 llama_embeddings = None
@@ -571,6 +584,139 @@ def encode_line(line):
 
     return buf
 
+## Twitch chat responses
+class AiTwitchBot(commands.Cog):
+
+    def __init__(self, bot):
+        self.bot = bot
+
+    ## Channel entrance for our bot
+    async def event_ready(self):
+        'Called once when the bot goes online.'
+        logger.info(f"{os.environ['BOT_NICK']} is online!")
+        ws = self.bot._ws  # this is only needed to send messages within event_ready
+        await ws.send_privmsg(os.environ['CHANNEL'], f"/groovyaibot has landed!")
+
+    ## Message sent in chat
+    async def event_message(self, ctx):
+        'Runs every time a message is sent in chat.'
+        if ctx.author.name.lower() == os.environ['BOT_NICK'].lower():
+            return
+
+        await self.bot.handle_commands(ctx)
+
+        if current_name in ctx.content.lower():
+            logger.info(f"{ctx.author.name} asked us {ctx.content} yet did not use the !personality syntax!")
+            await ctx.channel.send(f"Hi, @{ctx.author.name}! Please use !{current_name} to ask a question.")
+        else:
+            logger.info(f"{ctx.author.name} said {ctx.content}.");
+
+    # Key name of specific personality to use
+    @commands.command(name=current_name)
+    async def chat_request(ctx):
+        logger.debug(f"--- {ctx.author.name} asked {current_name} the question: %s" % ctx.content)
+        await ctx.send("Thank you for the question %s" % ctx.author.name)
+
+        # check if the author is a user we have seen, if not add them to the sqlite db
+        db_conn = sqlite3.connect("users")
+        db_conn.execute('''CREATE TABLE IF NOT EXISTS users (name TEXT PRIMARY KEY NOT NULL);''')
+        cursor = db_conn.cursor()
+        cursor.execute("SELECT name FROM users WHERE name = ?", (ctx.author.name,))
+        dbdata = cursor.fetchone()
+        if dbdata is None:
+            logger.info(f"Setting up DB for user {ctx.author.name}.");
+            db_conn.execute("INSERT INTO users (name) VALUES (?)", (ctx.author.name,))
+            db_conn.commit()
+            db_conn.close()
+
+        # get the chat history of questions from the db and create a list of chat objects of the assistant and user messages of past conversations as the last question asked from the user to the assistant
+        cursor = db_conn.cursor()
+        cursor.execute("SELECT * FROM chats WHERE user = ? ORDER BY timestamp DESC LIMIT 1", (ctx.author.name,))
+        dbdata = cursor.fetchone()
+        history = []
+        if dbdata is not None:
+            logger.info(f"{ctx.author.name} has a chat history, retrieving it.");
+            # create a chat object from the db data 
+            # store the messages in a history lsit
+            history = messages.copy()
+
+            ## User Question
+            for d in dbdata:
+                history.append(ChatCompletionMessage(
+                    role="user",
+                    content="%s" % d[4],
+                ))
+        db_conn.close()
+
+        # send the message to the prompt queue
+        request = {'question': f"{ctx.author.name} asked {current_name} the question {ctx.content}", 'history': history}
+        prompt_queue.put(request)
+    
+    # set the personality of the bot
+    @commands.command(name="personality")
+    async def personality(ctx):
+        logger.debug(f"--- Got personality chat from twitch: %s" % ctx.content)
+        await ctx.send(f"{ctx.author.name} switched personality to {ctx.content}")
+        # vett the personality asked for to make sure it is less than 100 characters and alphanumeric, else tell the chat user it is not the right format
+        if len(ctx.content) > 100:
+            logger.info(f"{ctx.author.name} tried to alter the personality to {ctx.content} yet is too long.")
+            await ctx.send(f"{ctx.author.name} the personality you have chosen is too long, please choose a personality that is 100 characters or less")
+            return
+        if not ctx.content.isalnum():
+            logger.info(f"{ctx.author.name} tried to alter the personality to {ctx.content} yet is not alphanumeric.")
+            await ctx.send(f"{ctx.author.name} the personality you have chosen is not alphanumeric, please choose a personality that is alphanumeric")
+            return
+        # set our personality to the content
+        current_personality = ctx.content
+
+    # set the name of the bot
+    @commands.command(name="name")
+    async def name(ctx):
+        logger.debug(f"--- Got name chat from twitch: %s" % ctx.content)
+        await ctx.send(f"{ctx.author.name} switched name to {ctx.content}")
+        # confirm name has no spaces and is 12 or less characters and alphanumeric, else tell the chat user it is not the right format
+        if len(ctx.content) > 12:
+            logger.info(f"{ctx.author.name} tried to alter the name to {ctx.content} yet is too long.")
+            await ctx.send(f"{ctx.author.name} the name you have chosen is too long, please choose a name that is 12 characters or less")
+            return
+        if not ctx.content.isalnum():
+            logger.info(f"{ctx.author.name} tried to alter the name to {ctx.content} yet is not alphanumeric.")
+            await ctx.send(f"{ctx.author.name} the name you have chosen is not alphanumeric, please choose a name that is alphanumeric")
+            return
+        # set our name to the content
+        current_name = ctx.content
+
+## Allows async running in thread for events
+def run_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    ## Bot config
+    bot = commands.Bot(
+        token=os.environ['TMI_TOKEN'],
+        client_id=os.environ['CLIENT_ID'],
+        nick=os.environ['BOT_NICK'],
+        prefix=os.environ['BOT_PREFIX'],
+        initial_channels=[os.environ['CHANNEL']])
+
+
+    # Setup bot responses
+    my_cog = AiTwitchBot(bot)
+    bot.add_cog(my_cog)
+
+    try:
+        loop.run_until_complete(bot.start())
+    finally:
+        loop.close()
+
+## Twitch Chat Bot
+def twitch_worker():
+    #asyncio.run(run_bot(), debug=args.debug)
+
+    while not exit_now:
+        # check if we are connected, if not connect and get channel setup, send a bot message if first time
+        time.sleep(0.1)
+        continue
 
 ## AI Conversation
 def prompt_worker():
@@ -578,7 +724,17 @@ def prompt_worker():
         #time.sleep(0.1)
         request = []
         question = ""
-        messages = []
+        ## System role
+        messages = [
+            ChatCompletionMessage(
+                # role="user",
+                role="system",
+                content="You are %s who is %s." % (
+                    args.ainame,
+                    args.aipersonality),
+            )
+        ]
+
         while not exit_now:
             #time.sleep(0.1)
             request = prompt_queue.get()
@@ -705,7 +861,7 @@ def main(stdscr):
     ### Main Loop
     next_question = ""
     while not exit_now:
-        #time.sleep(0.1)
+        time.sleep(0.1)
         next_question = ""
 
         try:
@@ -739,7 +895,9 @@ def main(stdscr):
 
             logger.debug("\n--- Next Question: %s" % next_question)
 
-            urls = extract_urls(next_question)
+            urls = []
+            if args.geturls:
+                urls = extract_urls(next_question)
             context = ""
             if len(urls) <= 0:
                 if args.debug:
@@ -886,8 +1044,8 @@ if __name__ == "__main__":
                         help="File path to model to load and use. Default is %s" % default_model)
     parser.add_argument("-em", "--embeddingmodel", type=str, default=default_embedding_model,
                         help="File path to embedding model to load and use. Use a small simple one to keep it fast. Default is %s" % default_embedding_model)
-    parser.add_argument("-ag", "--autogenerate", type=bool, default=False, help="Keep autogenerating the conversation without interactive prompting.")
-    parser.add_argument("-ss", "--streamspeak", type=bool, default=False, help="Speak the text as tts token count chunks.")
+    parser.add_argument("-ag", "--autogenerate", action="store_true", default=False, help="Keep autogenerating the conversation without interactive prompting.")
+    parser.add_argument("-ss", "--streamspeak", action="store_true", default=False, help="Speak the text as tts token count chunks.")
     parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=50, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
     parser.add_argument("-ttss", "--ttsseed", type=int, default=0,
                         help="TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow variance per line spoken.")
@@ -913,27 +1071,35 @@ if __name__ == "__main__":
     parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
     parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
     parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Temperature to set LLM Model.")
-    parser.add_argument("-d", "--debug", type=bool, default=False, help="Debug in a verbose manner.")
-    parser.add_argument("-dd", "--doubledebug", type=bool, default=False, help="Extra debugging output, very verbose.")
-    parser.add_argument("-s", "--silent", type=bool, default=False, help="Silent mode, No TTS Speaking.")
-    parser.add_argument("-ro", "--romanize", type=bool, default=False, help="Romanize LLM output text before input into TTS engine.")
-    parser.add_argument("-e", "--episode", type=bool, default=False, help="Episode mode, Output an TV Episode format script.")
+    parser.add_argument("-d", "--debug", action="store_true", default=False, help="Debug in a verbose manner.")
+    parser.add_argument("-dd", "--doubledebug", action="store_true", default=False, help="Extra debugging output, very verbose.")
+    parser.add_argument("-s", "--silent", action="store_true", default=False, help="Silent mode, No TTS Speaking.")
+    parser.add_argument("-ro", "--romanize", action="store_true", default=False, help="Romanize LLM output text before input into TTS engine.")
+    parser.add_argument("-e", "--episode", action="store_true", default=False, help="Episode mode, Output an TV Episode format script.")
     parser.add_argument("-pc", "--promptcompletion", type=str, default="\nQuestion: {user_question}\n{context}Answer:",
                         help="Prompt completion like...\n\nQuestion: {user_question}\nAnswer:")
     parser.add_argument("-re", "--roleenforcer",
                         type=str, default="\nAnswer the question asked by {user}. Stay in the role of {assistant}, give your thoughts and opinions as asked.\n",
                         help="Role enforcer statement with {user} and {assistant} template names replaced by the actual ones in use.")
-    parser.add_argument("-sd", "--summarizedocs", type=bool, default=False, help="Summarize the documents retrieved with a summarization model, takes a lot of resources.")
-    parser.add_argument("-udb", "--urlsdb", type=str, default="db/processed_urls.db", help="SQL Light DB file location.")
+    parser.add_argument("-sd", "--summarizedocs", action="store_true", default=False, help="Summarize the documents retrieved with a summarization model, takes a lot of resources.")
+    parser.add_argument("-udb", "--urlsdb", type=str, default="db/processed_urls.db", help="SQL Light retrieval URLs  DB file location.")
+    parser.add_argument("-cdb", "--chatdb", type=str, default="db/chat.db", help="SQL Light DB Twitch Chat file location.")
     parser.add_argument("-ectx", "--embeddingscontext", type=int, default=512, help="Embedding Model context, default 512.")
     parser.add_argument("-ews", "--embeddingwindowsize", type=int, default=256, help="Document embedding window size, default 256.")
     parser.add_argument("-ewo", "--embeddingwindowoverlap", type=int, default=25, help="Document embedding window overlap, default 25.")
     parser.add_argument("-eds", "--embeddingdocsize", type=int, default=4096, help="Document embedding window overlap, default 4096.")
     parser.add_argument("-hctx", "--historycontext", type=int, default=0, help="Document embedding window overlap, default 4096.")
     parser.add_argument("-im", "--imagemodel", type=str, default="runwayml/stable-diffusion-v1-5", help="Stable Diffusion Image Model to use.")
-    parser.add_argument("-ns", "--nosync", type=bool, default=False, help="Don't sync the text with the speaking, output realtiem.\n")
+    parser.add_argument("-ns", "--nosync", action="store_true", default=False, help="Don't sync the text with the speaking, output realtiem.\n")
+    parser.add_argument("-tw", "--twitch", action="store_true", default=False, help="Twitch mode, output to twitch chat.")
+    parser.add_argument("-gu", "--geturls", action="store_true", default=False, help="Get URLs from the prompt and use them to retrieve documents.")
 
     args = parser.parse_args()
+
+    ## Personality for chat
+    current_personality = args.aipersonality
+    current_name = args.ainame
+    chat_db = args.chatdb
 
     ## Stable diffusion image model
     pipe = DiffusionPipeline.from_pretrained(args.imagemodel)
@@ -982,17 +1148,6 @@ if __name__ == "__main__":
     if args.language != "":
         args.promptcompletion = "%s Speak in the %s language" % (args.promptcompletion, args.language)
 
-    ## System role
-    messages=[
-        ChatCompletionMessage(
-            # role="user",
-            role="system",
-            content="You are %s who is %s." % (
-                args.ainame,
-                args.aipersonality),
-        )
-    ]
-
     ## LLM Model for Text TODO are setting gpu layers good/necessary?
     llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
@@ -1005,6 +1160,9 @@ if __name__ == "__main__":
     image_thread.start()
     prompt_thread = threading.Thread(target=prompt_worker)
     prompt_thread.start()
+    if args.twitch:
+        twitch_thread = threading.Thread(target=twitch_worker)
+        twitch_thread.start()
 
     # Start the wxPython app in a separate thread
     #wx_thread = threading.Thread(target=start_wx_app)
@@ -1016,6 +1174,7 @@ if __name__ == "__main__":
 
     user_speaking_rate = args.userspeakingrate
     user_noise_scale = args.usernoisescale
+
 
     if not args.silent:
         aimodel = VitsModel.from_pretrained(facebook_model)
@@ -1052,6 +1211,9 @@ if __name__ == "__main__":
         image_thread.join()  # Wait for the image thread to finish
         audio_thread.join()  # Wait for the audio thread to finish
         prompt_thread.join()  # Wait for the prompt thread to finish
+        if args.twitch:
+            twitch_thread.join()
 
         logger.info("\n=== GAIB The Groovy AI Bot v2...")
         sys.exit(0)
+
