@@ -1036,7 +1036,7 @@ def main(stdscr):
             ## Did we get a question to start off with on input?
             if (args.autogenerate):
                 # auto-generate prompts for 24/7 generation
-                next_question = "Continue the discussion"
+                next_question = "..."
             elif (have_ran or next_question == ""):
                 ## Episode or Question
                 user_input = get_user_input()
@@ -1044,19 +1044,18 @@ def main(stdscr):
             else:
                 next_question = args.question
 
-            have_ran = True
-
             logger.debug("\n--- Next Question: %s" % next_question)
 
             send_to_llm("main", args.username, next_question, [], current_name, current_personality)
 
             # Generate the Answer
-            if args.episode:
-                #stdscr.addstr(0, 0, "Generating an Episode... ")
-                print("Generating an Episode...")
-            else:
-                #stdscr.addstr(0, 0, "Generating an Answer... ")
-                print("Generating an Answer... ")
+            if not args.autogenerate or not have_ran:
+                if args.episode:
+                    #stdscr.addstr(0, 0, "Generating an Episode... ")
+                    print("Generating an Episode...")
+                else:
+                    #stdscr.addstr(0, 0, "Generating an Answer... ")
+                    print("Generating an Answer... ")
 
             ## Wait for response
             response = ""
@@ -1085,7 +1084,7 @@ def main(stdscr):
                             print()
                             line_length = 0
 
-            #stdscr.addstr(0, 0, "END OF STREAM")
+            have_ran = True
             print("END OF STREAM")
             logger.debug("Response: %s" % response)
 
