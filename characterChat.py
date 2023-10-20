@@ -1089,7 +1089,8 @@ def main(stdscr):
                             line_length = 0
 
             have_ran = True
-            print("END OF STREAM")
+            if not args.autogenerate:
+                print("END OF STREAM")
             logger.debug("Response: %s" % response)
 
             ## Story User Question in History
