@@ -944,6 +944,8 @@ def prompt_worker():
         role = ""
         accumulator = []
 
+        output_queue.put(question)
+
         for item in output:
             if args.doubledebug:
                 logger.debug("--- Got Item: %s" % json.dumps(item))
