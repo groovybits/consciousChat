@@ -236,12 +236,11 @@ def image_worker():
             imgname = image_history.add_image(image, image_prompt)
             logger.debug("--- Image History: %s" % imgname)
 
-            print("\n--- Stable Diffusion got an image: %s\n" % imgname[:80])
+            logger.info("--- Stable Diffusion got an image: %s\n" % imgname[:80])
 
             ## ASCII Printout of Image
-            #stdscr.refresh()  # Refresh the screen to show changes
             print(image_to_ascii(image, 50))
-            #stdscr.refresh()  # Refresh the screen to show changes
+
             # Update the image in the app
             #app.frame.update_display()
             #app.update_image(image)
@@ -424,10 +423,10 @@ def extract_urls(text):
 
 def gethttp(url, question, llama_embeddings, persistdirectory):
     if url == "" or url == None:
-        print("\n--- Error: URL is empty for gethttp()")
+        logger.error("--- Error: URL is empty for gethttp()")
         return []
     if question == "":
-        print("\n--- Error: Question is empty for gethttp()")
+        logger.error("--- Error: Question is empty for gethttp()")
         return []
 
     # Parse the URL to get a safe directory name
@@ -443,7 +442,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
         try:
             os.makedirs(url_directory)
         except:
-            print("\n--- Error trying to create directory {url_directory}")
+            logger.error("--- Error trying to create directory {url_directory}")
             return []
 
     ## Connect to DB to check if this url has already been ingested
@@ -466,10 +465,9 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
             logger.info("--- gethttp() Found vector embeddings for {url}, returning them...", docs)
             return docs;
         except Exception as e:
-            print("\n--- Error: Looking up embeddings for {url}:", e)
+            logger.error("--- Error: Looking up embeddings for {url}:", e)
     else:
         logger.info(f"--- New URL {url}, ingesting into vector db...")
-        print(f"\n--- New URL {url}, ingesting into vector db...")
 
     ## Close SQL Light DB Connection
     db_conn.close()
@@ -477,7 +475,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
     try:
         loader = RecursiveUrlLoader(url=url, max_depth=3, extractor=lambda x: Soup(x, "html.parser").text)
     except Exception as e:
-        print("\n--- Error: with url {url} gethttp Url Loader:", e)
+        logger.error("--- Error: with url {url} gethttp Url Loader:", e)
         return []
 
     docs = []
@@ -491,7 +489,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
             vectorstore.persist()
             docs = vectorstore.similarity_search(question)
         except Exception as e:
-            print("\n--- Error with {url} text splitting in gethttp():", e)
+            logger.error("\n--- Error with {url} text splitting in gethttp():", e)
 
     ## Only save if we found something
     if len(docs) > 0:
@@ -576,10 +574,12 @@ def encode_line(line):
         return None
     if not line or line == "":
         return None
-    logger.debug("--- Speaking line with TTS... --- %s" % line)
+    logger.debug("--- Speaking line with TTS: %s" % line)
 
     ## Numbers to Words
     aitext = convert_numbers_to_words(line)
+    if aitext == "":
+        return None
     ## Romanize
     romanized_aitext = ""
     try:
@@ -588,12 +588,14 @@ def encode_line(line):
             uroman_path = os.environ["UROMAN"]
         if args.romanize:
             romanized_aitext = uromanize(aitext, uroman_path=uroman_path)
-            aitext = romanized_aitext
+            if romanized_aitext != "":
+                aitext = romanized_aitext
+            else:
+                logger.error("--- Error Romanizing Text: %s" % aitext)
             if args.debug:
                 logger.debug("--- Romanized Text: %s" % romanized_aitext)
     except Exception as e:
-        logger.error("--- Error romanizing input:", e)
-        print("\n--- Error romanizing input:", e)
+        logger.error(f"--- Error romanizing input: {aitext}", e)
 
     ## Tokenize
     aiinputs = aitokenizer(aitext, return_tensors="pt")
@@ -604,7 +606,7 @@ def encode_line(line):
         with torch.no_grad():
             aioutput = aimodel(**aiinputs).waveform
     except Exception as e:
-        print("\n--- Error with TTS AI Speech model!", e)
+        logger.error(f"--- Error with TTS AI Speech model! {aitext} ", e)
         return None
 
     ## Buffer audio speech output as WAV
@@ -1011,7 +1013,7 @@ def signal_handler(sig, frame):
         exit_flag = True
         sys.stdout.flush()
         print("\n\nYou pressed Ctrl+C! Exiting gracefully...\n")
-        logger.error("\n\nYou pressed Ctrl+C! Exiting gracefully...\n")
+        logger.error("\n\nGot a Ctrl+C! Exiting gracefully...\n")
         cleanup()
         sys.exit(1)
     except Exception as e:
@@ -1259,7 +1261,7 @@ if __name__ == "__main__":
         if (args.aisamplingrate == aimodel.config.sampling_rate):
             ai_sampling_rate = args.aisamplingrate
         else:
-            print("\n--- Error ai samplingrate is not matching the models of %d" % aimodel.sampling_rate)
+            logger.error("--- Error ai samplingrate is not matching the models of %d" % aimodel.sampling_rate)
 
         ## User TTS Model for Speech
         usermodel = VitsModel.from_pretrained(facebook_model)
@@ -1270,7 +1272,7 @@ if __name__ == "__main__":
         if (args.usersamplingrate == usermodel.config.sampling_rate):
             user_sampling_rate = args.usersamplingrate
         else:
-            print("\n--- Error user samplingrate is not matching the models of %d" % usermodel.sampling_rate)
+            logger.error("--- Error user samplingrate is not matching the models of %d" % usermodel.sampling_rate)
 
     personalities.append(current_name)
 
