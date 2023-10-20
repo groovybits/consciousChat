@@ -239,6 +239,7 @@ def image_worker():
             logger.info("--- Stable Diffusion got an image: %s\n" % imgname[:80])
 
             ## ASCII Printout of Image
+            print("\n", end='', flush=True)
             print(image_to_ascii(image, 50), end='', flush=True)
 
             # Update the image in the app
