@@ -16,3 +16,4 @@ chromadb
 diffusers
 wxPython
 python-dotenv
+psutil

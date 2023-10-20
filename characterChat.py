@@ -49,6 +49,13 @@ import functools
 from dotenv import load_dotenv
 from twitchio.ext import commands
 import asyncio
+import textwrap
+
+"""
+import psutil
+p = psutil.Process()
+p.nice(-10)  # Set a higher priority; be cautious as it can affect system stability
+"""
 
 load_dotenv()
 
@@ -229,7 +236,7 @@ def image_worker():
             imgname = image_history.add_image(image, image_prompt)
             logger.debug("--- Image History: %s" % imgname)
 
-            print("\n--- Stable Diffusion got an image: %s\n" % imgname)
+            print("\n--- Stable Diffusion got an image: %s\n" % imgname[:80])
 
             ## ASCII Printout of Image
             #stdscr.refresh()  # Refresh the screen to show changes
@@ -1054,6 +1061,7 @@ def main(stdscr):
             ## Wait for response
             response = ""
             start_time = time.time()
+            line_length = 0
             while not exit_now:
                 text = ""
                 if not output_queue.empty():
@@ -1070,10 +1078,12 @@ def main(stdscr):
                     break
 
                 if text != "":
-                    response = text + response
-                    ## Print out tokens / text generation
-                    #stdscr.addstr(0, 0, f"{text}")
-                    print(text, end='', flush=True)
+                    for char in text:
+                        print(char, end='', flush=True)
+                        line_length += 1
+                        if line_length >= 80 and char in [' ', '\n', '.', '?']:
+                            print()
+                            line_length = 0
 
             #stdscr.addstr(0, 0, "END OF STREAM")
             print("END OF STREAM")
