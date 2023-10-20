@@ -601,44 +601,48 @@ class AiTwitchBot(commands.Cog):
         await ws.send_privmsg(os.environ['CHANNEL'], f"/groovyaibot has landed!")
 
     ## Message sent in chat
-    async def event_message(self, ctx):
+    async def event_message(self, message):
         'Runs every time a message is sent in chat.'
-        if ctx.author.name.lower() == os.environ['BOT_NICK'].lower():
+        if message.author.name.lower() == os.environ['BOT_NICK'].lower():
             return
 
-        await self.bot.handle_commands(ctx)
+        if message.echo:
+            return
 
-        if current_name in ctx.content.lower():
-            logger.info(f"{ctx.author.name} asked us {ctx.content} yet did not use the !personality syntax!")
-            await ctx.channel.send(f"Hi, @{ctx.author.name}! Please use !{current_name} to ask a question.")
+        await self.bot.handle_commands(message)
+
+        if current_name in message.content.lower():
+            logger.info(f"{message.author.name} asked us {message.content} yet did not use the !personality syntax!")
+            await message.channel.send(f"Hi, @{message.author.name}! Please use !{current_name} to ask a question.")
         else:
-            logger.info(f"{ctx.author.name} said {ctx.content}.");
+            logger.info(f"{message.author.name} said {message.content}.");
 
     # Key name of specific personality to use
-    @commands.command(name=current_name)
-    async def chat_request(ctx):
-        logger.debug(f"--- {ctx.author.name} asked {current_name} the question: %s" % ctx.content)
-        await ctx.send("Thank you for the question %s" % ctx.author.name)
+    @commands.command(name=current_name.lower())
+    async def chat_request(self, ctx: commands.Context):
+        question = ctx.message.content.replace(f"!{current_name.lower()}",'')
+        logger.debug(f"--- {ctx.author.name} asked {current_name} the question: %s" % question)
+        await ctx.send("Thank you for the question %s" % ctx.message.author.name)
 
         # check if the author is a user we have seen, if not add them to the sqlite db
         db_conn = sqlite3.connect("users")
         db_conn.execute('''CREATE TABLE IF NOT EXISTS users (name TEXT PRIMARY KEY NOT NULL);''')
         cursor = db_conn.cursor()
-        cursor.execute("SELECT name FROM users WHERE name = ?", (ctx.author.name,))
+        cursor.execute("SELECT name FROM users WHERE name = ?", (ctx.message.author.name,))
         dbdata = cursor.fetchone()
         if dbdata is None:
-            logger.info(f"Setting up DB for user {ctx.author.name}.");
-            db_conn.execute("INSERT INTO users (name) VALUES (?)", (ctx.author.name,))
+            logger.info(f"Setting up DB for user {ctx.message.author.name}.");
+            db_conn.execute("INSERT INTO users (name) VALUES (?)", (ctx.message.author.name,))
             db_conn.commit()
             db_conn.close()
 
         # get the chat history of questions from the db and create a list of chat objects of the assistant and user messages of past conversations as the last question asked from the user to the assistant
         cursor = db_conn.cursor()
-        cursor.execute("SELECT * FROM chats WHERE user = ? ORDER BY timestamp DESC LIMIT 1", (ctx.author.name,))
+        cursor.execute("SELECT * FROM chats WHERE user = ? ORDER BY timestamp DESC LIMIT 1", (ctx.message.author.name,))
         dbdata = cursor.fetchone()
         history = messages.copy()
         if dbdata is not None:
-            logger.info(f"{ctx.author.name} has a chat history, retrieving it.");
+            logger.info(f"{ctx.message.author.name} has a chat history, retrieving it.");
             # create a chat object from the db data 
             # store the messages in a history lsit
             history = messages.copy()
@@ -652,42 +656,45 @@ class AiTwitchBot(commands.Cog):
         db_conn.close()
 
         # send the message to the prompt queue
-        request = {'question': f"{ctx.author.name} asked {current_name} the question {ctx.content}", 'history': history}
+        request = {'question': f"{ctx.message.author.name} asked {current_name} the question {question}", 'history': history}
         prompt_queue.put(request)
 
     # set the personality of the bot
     @commands.command(name="personality")
-    async def personality(ctx):
-        logger.debug(f"--- Got personality chat from twitch: %s" % ctx.content)
-        await ctx.send(f"{ctx.author.name} switched personality to {ctx.content}")
+    async def personality(self, ctx: commands.Context):
+        personality = ctx.message.content.replace('!personality','')
+        pattern = re.compile(r'^[a-zA-Z0-9 ,.!?;:()\'\"-]*$')
+        logger.debug(f"--- Got personality switch from twitch: %s" % personality)
         # vett the personality asked for to make sure it is less than 100 characters and alphanumeric, else tell the chat user it is not the right format
-        if len(ctx.content) > 100:
-            logger.info(f"{ctx.author.name} tried to alter the personality to {ctx.content} yet is too long.")
-            await ctx.send(f"{ctx.author.name} the personality you have chosen is too long, please choose a personality that is 100 characters or less")
+        if len(personality) > 100:
+            logger.info(f"{ctx.message.author.name} tried to alter the personality to {personality} yet is too long.")
+            await ctx.send(f"{ctx.message.author.name} the personality you have chosen is too long, please choose a personality that is 100 characters or less")
             return
-        if not ctx.content.isalnum():
-            logger.info(f"{ctx.author.name} tried to alter the personality to {ctx.content} yet is not alphanumeric.")
-            await ctx.send(f"{ctx.author.name} the personality you have chosen is not alphanumeric, please choose a personality that is alphanumeric")
+        if not pattern.match(personality):
+            logger.info(f"{ctx.message.author.name} tried to alter the personality to {personality} yet is not alphanumeric.")
+            await ctx.send(f"{ctx.message.author.name} the personality you have chosen is not alphanumeric, please choose a personality that is alphanumeric")
             return
+        await ctx.send(f"{ctx.message.author.name} switched personality to {personality}")
         # set our personality to the content
-        current_personality = ctx.content
+        current_personality = personality
 
     # set the name of the bot
     @commands.command(name="name")
-    async def name(ctx):
-        logger.debug(f"--- Got name chat from twitch: %s" % ctx.content)
-        await ctx.send(f"{ctx.author.name} switched name to {ctx.content}")
+    async def name(self, ctx: commands.Context):
+        name= ctx.message.content.replace('!name','')
+        logger.debug(f"--- Got name switch from twitch: %s" % name)
         # confirm name has no spaces and is 12 or less characters and alphanumeric, else tell the chat user it is not the right format
-        if len(ctx.content) > 12:
-            logger.info(f"{ctx.author.name} tried to alter the name to {ctx.content} yet is too long.")
-            await ctx.send(f"{ctx.author.name} the name you have chosen is too long, please choose a name that is 12 characters or less")
+        if len(name) > 12:
+            logger.info(f"{ctx.message.author.name} tried to alter the name to {name} yet is too long.")
+            await ctx.send(f"{ctx.message.author.name} the name you have chosen is too long, please choose a name that is 12 characters or less")
             return
-        if not ctx.content.isalnum():
-            logger.info(f"{ctx.author.name} tried to alter the name to {ctx.content} yet is not alphanumeric.")
-            await ctx.send(f"{ctx.author.name} the name you have chosen is not alphanumeric, please choose a name that is alphanumeric")
+        if not name.isalnum():
+            logger.info(f"{ctx.message.author.name} tried to alter the name to {name} yet is not alphanumeric.")
+            await ctx.send(f"{ctx.message.author.name} the name you have chosen is not alphanumeric, please choose a name that is alphanumeric")
             return
+        await ctx.send(f"{ctx.message.author.name} switched name to {name}")
         # set our name to the content
-        current_name = ctx.content
+        current_name = name
 
 ## Allows async running in thread for events
 def run_bot():
