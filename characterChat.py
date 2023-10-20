@@ -681,14 +681,15 @@ class AiTwitchBot(commands.Cog):
     # set the name of the bot
     @commands.command(name="name")
     async def name(self, ctx: commands.Context):
-        name= ctx.message.content.replace('!name','')
+        name = ctx.message.content.replace('!name','').strip().replace(' ', '_')
+        pattern = re.compile(r'^[a-zA-Z0-9 ,.!?;:()\'\"-]*$')
         logger.debug(f"--- Got name switch from twitch: %s" % name)
         # confirm name has no spaces and is 12 or less characters and alphanumeric, else tell the chat user it is not the right format
         if len(name) > 12:
             logger.info(f"{ctx.message.author.name} tried to alter the name to {name} yet is too long.")
             await ctx.send(f"{ctx.message.author.name} the name you have chosen is too long, please choose a name that is 12 characters or less")
             return
-        if not name.isalnum():
+        if not pattern.match(name):
             logger.info(f"{ctx.message.author.name} tried to alter the name to {name} yet is not alphanumeric.")
             await ctx.send(f"{ctx.message.author.name} the name you have chosen is not alphanumeric, please choose a name that is alphanumeric")
             return
@@ -948,11 +949,11 @@ def main(stdscr):
             ## Build prompt
             prompt = "%s You are %s who is %s %s %s\n%s%s" % (
                     instructions,
-                    args.ainame,
-                    args.aipersonality,
+                    current_name,
+                    current_personality,
                     purpose,
                     role,
-                    args.roleenforcer.replace('{user}', args.username).replace('{assistant}', args.ainame),
+                    args.roleenforcer.replace('{user}', args.username).replace('{assistant}', current_name),
                     args.promptcompletion.replace('{user_question}', next_question).replace('{context}', prompt_context))
 
             logger.debug("--- Using Prompt: %s" % prompt)
