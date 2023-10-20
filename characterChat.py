@@ -942,9 +942,10 @@ def prompt_worker():
         role = ""
         accumulator = []
 
-        if args.nosync:
-            output_queue.put(question)
-        speak_queue.put(question)
+        if question != "...":
+            if args.nosync:
+                output_queue.put(question)
+            speak_queue.put(question)
 
         for item in output:
             if args.doubledebug:
