@@ -814,9 +814,7 @@ class AiTwitchBot(commands.Cog):
         formatted_question = f"{name} asked {ai_name} the question {question}"
         history.append(ChatCompletionMessage(role="user", content=formatted_question))
 
-        prompt = build_prompt(name, formatted_question, ai_name, self.ai_personality)
-
-        send_to_llm("twitch", name, prompt, history, ai_name, self.ai_personality)
+        send_to_llm("twitch", name, formatted_question, history, ai_name, self.ai_personality)
 
     # set the personality of the bot
     @commands.command(name="personality")
@@ -944,7 +942,9 @@ def prompt_worker():
         role = ""
         accumulator = []
 
-        output_queue.put(question)
+        if args.nosync:
+            output_queue.put(question)
+        speak_queue.put(question)
 
         for item in output:
             if args.doubledebug:
