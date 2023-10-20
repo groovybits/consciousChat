@@ -824,7 +824,7 @@ class AiTwitchBot(commands.Cog):
         pattern = re.compile(r'^[a-zA-Z0-9 ,.!?;:()\'\"-]*$')
         logger.debug(f"--- Got personality switch from twitch: %s" % personality)
         # vett the personality asked for to make sure it is less than 100 characters and alphanumeric, else tell the chat user it is not the right format
-        if len(personality) > 100:
+        if len(personality) > 500:
             logger.info(f"{ctx.message.author.name} tried to alter the personality to {personality} yet is too long.")
             await ctx.send(f"{ctx.message.author.name} the personality you have chosen is too long, please choose a personality that is 100 characters or less")
             return
@@ -843,7 +843,7 @@ class AiTwitchBot(commands.Cog):
         pattern = re.compile(r'^[a-zA-Z0-9 ,.!?;:()\'\"-]*$')
         logger.debug(f"--- Got name switch from twitch: %s" % name)
         # confirm name has no spaces and is 12 or less characters and alphanumeric, else tell the chat user it is not the right format
-        if len(name) > 12:
+        if len(name) > 32:
             logger.info(f"{ctx.message.author.name} tried to alter the name to {name} yet is too long.")
             await ctx.send(f"{ctx.message.author.name} the name you have chosen is too long, please choose a name that is 12 characters or less")
             return
