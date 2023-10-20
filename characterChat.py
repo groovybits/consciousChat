@@ -721,7 +721,7 @@ class AiTwitchBot(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.ai_name = current_name
-        self.ai_personaity = current_personality
+        self.ai_personality = current_personality
 
     ## Channel entrance for our bot
     async def event_ready(self):
