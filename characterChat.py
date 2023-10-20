@@ -69,6 +69,8 @@ current_personality = ""
 current_name = ""
 chat_db = "db/chat.db"
 
+personalities = []
+
 ## Quiet operation, no warnings
 logging.set_verbosity_error()
 warnings.simplefilter(action='ignore', category=Warning)
@@ -95,6 +97,7 @@ image_queue = queue.Queue()
 text_queue = queue.Queue()
 output_queue = queue.Queue()
 prompt_queue = queue.Queue()
+twitch_queue = queue.Queue()
 
 # Define a lock for thread safety
 #audio_queue_lock = threading.Lock()
@@ -196,10 +199,16 @@ def image_to_ascii(image, width):
 
 def image_worker():
     while not exit_now:
-        #time.sleep(0.1)
-        image_prompt = image_queue.get()
+        image_prompt = ""
+        if not image_queue.empty():
+            image_prompt = image_queue.get()
+        else:
+            time.sleep(.01)
+            continue
+
         if exit_now or image_prompt == 'STOP':
             break
+
         else:
             # First-time "warmup" pass if PyTorch version is 1.13 (see explanation above)
             version = [int(v) for v in torch.__version__.split(".")]
@@ -237,8 +246,13 @@ def speak_worker():
     buffer_sent = False  # flag to track if the buffer has been sent to the player
 
     while not exit_now:
-        #time.sleep(0.1)
-        line = speak_queue.get()
+        line = ""
+        if not speak_queue.empty():
+            line = speak_queue.get()
+        else:
+            time.sleep(0.1)
+            continue
+
         if line == "":
             continue
 
@@ -279,9 +293,17 @@ def audio_worker():
     audio_stopped = False
     text_stopped = False
     while not exit_now:
-        #time.sleep(0.1)
-        text = text_queue.get()
-        audio = audio_queue.get()
+        text = ""
+        audio = ""
+        if not text_queue.empty():
+            text = text_queue.get()
+
+        if not audio_queue.empty():
+            audio = audio_queue.get()
+
+        if text == "" and audio == "":
+            time.sleep(0.1)
+            continue
 
         if audio == 'STOP':
             audio_stopped = True
@@ -290,12 +312,12 @@ def audio_worker():
         if (text_stopped and audio_stopped):
             output_queue.put('STOP')
             image_queue.put('STOP')
-            break ## Finished with Text and Audio generation output
+            break
 
         ## Image Queue for text
         image_queue.put(text)
         ## Output text to sync if requested
-        if not args.nosync:
+        if not args.nosync and text != "" and text != "STOP":
             output_queue.put(text)
 
         if audio != "":
@@ -312,7 +334,6 @@ def audio_worker():
 
                 ## Read and Speak
                 while not exit_now:
-                    #time.sleep(0.1)
                     audiodata = wave_obj.readframes(1024)
                     if not audiodata:
                         break
@@ -587,11 +608,120 @@ def encode_line(line):
 
     return buf
 
+def build_prompt(username, question, ainame, aipersonality):
+    urls = []
+    if args.geturls:
+        urls = extract_urls(question)
+    context = ""
+    if len(urls) <= 0:
+        if args.debug:
+            logger.debug("--- Found no URLs in prompt")
+
+    ## URL in prompt parsing
+    try:
+        for url in urls:
+            url = url.strip(",.;:")
+            if args.debug:
+                logger.debug("--- Found URL {url} in prompt input.")
+
+            if llama_embeddings == None:
+                llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
+                                                      n_ctx=args.embeddingscontext, verbose=args.doubledebug,
+                                                      n_gpu_layers=args.gpulayers)
+
+            # Initialize summarization pipeline for summarizing Documents retrieved
+            summarizer = None
+            if args.summarizedocs and summarize == None:
+                summarizer = pipeline("summarization")
+
+            docs = gethttp(url, question, llama_embeddings, args.persistdirectory)
+            if args.debug:
+                logger.info("--- GetHTTP found {url} with %d docs" % len(docs))
+            if len(docs) > 0:
+                if args.summarizedocs:
+                    parsed_output = summarize_documents(docs) # parse_documents gets more information with less precision
+                else:
+                    parsed_output = parse_documents(docs)
+                context = "%s" % (parsed_output.strip().replace("\n", ', '))
+
+    except Exception as e:
+        logger.error("\n--- Error with url retrieval:", e)
+
+    ## Context inclusion if we have vectorDB results
+    prompt_context = ""
+    if context != "":
+        prompt_context = "Context:%s\n" % context
+
+    ## Prompt parts
+    instructions = "Use the Chat History and 'Context: <context>' section below if it has related information to help answer the question or tell the story requested."
+    role = "Do not reveal that you are using the context, it is not part of the question but a document retrieved in relation to the questions."
+    purpose = "Use the Context as inspiration and references for your answers."
+
+    ## Build prompt
+    prompt = "%s You are %s who is %s %s %s\n%s%s" % (
+            instructions,
+            ainame,
+            aipersonality,
+            purpose,
+            role,
+            args.roleenforcer.replace('{user}', username).replace('{assistant}', current_name),
+            args.promptcompletion.replace('{user_question}', question).replace('{context}', prompt_context))
+
+    logger.debug(f"--- {username} with {question} is Using Prompt: %s" % prompt)
+
+    return prompt
+
+def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_personality):
+    prompt = build_prompt(username, question, ai_name, ai_personality)
+
+    logger.info(f"send_to_llm: recieved a {queue_name} message from {username} for personality {ai_name}")
+    logger.info(f"send_to_llm: question {question}")
+
+    ## Setup system prompt
+    history = [
+        ChatCompletionMessage(
+            role="system",
+            content="You are %s who is %s." % (
+                ai_name,
+                ai_personality),
+        )
+    ]
+
+    history.extend(ChatCompletionMessage(role=m['role'], content=m['content']) for m in messages)
+    history.extend(ChatCompletionMessage(role=m['role'], content=m['content']) for m in userhistory)
+
+    ## User Question
+    history.append(ChatCompletionMessage(
+            role="user",
+            content="%s" % prompt,
+        ))
+
+    ## History debug output
+    logger.debug("Chat History: %s" % json.dumps(history))
+
+    # Calculate the total length of all messages in history
+    total_length = sum([len(msg['content']) for msg in history])
+
+    # Cleanup history messages
+    while total_length > args.historycontext:
+        # Remove the oldest message after the system prompt
+        if len(history) > 2:
+            total_length -= len(history[1]['content'])
+            del history[1]
+
+    ## Queue prompt
+    if queue_name == 'twitch':
+        twitch_queue.put({'question': question, 'history': history})
+    else:
+        prompt_queue.put({'question': question, 'history': history})
+
 ## Twitch chat responses
 class AiTwitchBot(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        self.ai_name = current_name
+        self.ai_personaity = current_personality
 
     ## Channel entrance for our bot
     async def event_ready(self):
@@ -603,61 +733,82 @@ class AiTwitchBot(commands.Cog):
     ## Message sent in chat
     async def event_message(self, message):
         'Runs every time a message is sent in chat.'
+        logger.debug(f"--- {message.author.name} asked {self.ai_name} the question: {message.content}")
         if message.author.name.lower() == os.environ['BOT_NICK'].lower():
             return
 
         if message.echo:
             return
 
-        await self.bot.handle_commands(message)
-
-        if current_name in message.content.lower():
+        if self.ai_name in message.content.lower():
             logger.info(f"{message.author.name} asked us {message.content} yet did not use the !personality syntax!")
-            await message.channel.send(f"Hi, @{message.author.name}! Please use !{current_name} to ask a question.")
+            await message.channel.send(f"Hi, @{message.author.name}! Please use !{self.ai_name} to ask a question.")
         else:
             logger.info(f"{message.author.name} said {message.content}.");
 
-    # Key name of specific personality to use
+        await self.bot.handle_commands(message)
+
     @commands.command(name="message")
     async def chat_request(self, ctx: commands.Context):
-        question = ctx.message.content.replace(f"!message ",'')
-        logger.debug(f"--- {ctx.author.name} asked {current_name} the question: %s" % question)
-        await ctx.send("Thank you for the question %s" % ctx.message.author.name)
+        question = ctx.message.content.replace(f"!message ", '')
+        name = ctx.message.author.name
 
-        # check if the author is a user we have seen, if not add them to the sqlite db
-        db_conn = sqlite3.connect("users")
-        db_conn.execute('''CREATE TABLE IF NOT EXISTS users (name TEXT PRIMARY KEY NOT NULL);''')
+        # Remove unwanted characters
+        translation_table = str.maketrans('', '', ':,')
+        cleaned_question = question.translate(translation_table)
+
+        # Split the cleaned question into words and get the first word
+        ai_name = cleaned_question.split()[0] if cleaned_question else None
+
+        # Check our list of personalities
+        if ai_name not in personalities:
+            logger.debug(f"--- {name} asked for {self.ai_name} but it doesn't exist, using default.")
+            ai_name = self.ai_name    
+
+        logger.debug(f"--- {name} asked {ai_name} the question: {question}")
+
+        await ctx.send(f"Thank you for the question {name}")
+
+        # Connect to the database
+        db_conn = sqlite3.connect(args.chatdb)
         cursor = db_conn.cursor()
-        cursor.execute("SELECT name FROM users WHERE name = ?", (ctx.message.author.name,))
+
+        # Ensure the necessary tables exist
+        cursor.execute('''CREATE TABLE IF NOT EXISTS users (name TEXT PRIMARY KEY NOT NULL);''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS messages (
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          user TEXT NOT NULL,
+                          content TEXT NOT NULL,
+                          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                          FOREIGN KEY (user) REFERENCES users(name)
+                          );''')
+
+        # Check if the user exists, if not, add them
+        cursor.execute("SELECT name FROM users WHERE name = ?", (name,))
         dbdata = cursor.fetchone()
         if dbdata is None:
-            logger.info(f"Setting up DB for user {ctx.message.author.name}.");
-            db_conn.execute("INSERT INTO users (name) VALUES (?)", (ctx.message.author.name,))
+            logger.info(f"Setting up DB for user {name}.")
+            cursor.execute("INSERT INTO users (name) VALUES (?)", (name,))
             db_conn.commit()
-            db_conn.close()
 
-        # get the chat history of questions from the db and create a list of chat objects of the assistant and user messages of past conversations as the last question asked from the user to the assistant
-        cursor = db_conn.cursor()
-        cursor.execute("SELECT * FROM chats WHERE user = ? ORDER BY timestamp DESC LIMIT 1", (ctx.message.author.name,))
-        dbdata = cursor.fetchone()
-        history = messages.copy()
-        if dbdata is not None:
-            logger.info(f"{ctx.message.author.name} has a chat history, retrieving it.");
-            # create a chat object from the db data 
-            # store the messages in a history lsit
-            history = messages.copy()
+        # Add the new message to the messages table
+        cursor.execute("INSERT INTO messages (user, content) VALUES (?, ?)", (name, question))
+        db_conn.commit()
 
-            ## User Question
-            for d in dbdata:
-                history.append(ChatCompletionMessage(
-                    role="user",
-                    content="%s" % d[4],
-                ))
+        # Retrieve the chat history for this user
+        cursor.execute("SELECT content FROM messages WHERE user = ? ORDER BY timestamp", (name,))
+        dbdata = cursor.fetchall()
+        history = [ChatCompletionMessage(role="user", content=d[0]) for d in dbdata]
+
         db_conn.close()
 
-        # send the message to the prompt queue
-        request = {'question': f"{ctx.message.author.name} asked {current_name} the question {question}", 'history': history}
-        prompt_queue.put(request)
+        # Formulate the question and append it to history
+        formatted_question = f"{name} asked {ai_name} the question {question}"
+        history.append(ChatCompletionMessage(role="user", content=formatted_question))
+
+        prompt = build_prompt(name, formatted_question, ai_name, self.ai_personality)
+
+        send_to_llm("twitch", name, prompt, history, ai_name, self.ai_personality)
 
     # set the personality of the bot
     @commands.command(name="personality")
@@ -676,7 +827,7 @@ class AiTwitchBot(commands.Cog):
             return
         await ctx.send(f"{ctx.message.author.name} switched personality to {personality}")
         # set our personality to the content
-        current_personality = personality
+        self.ai_personality = personality
 
     # set the name of the bot
     @commands.command(name="name")
@@ -695,7 +846,9 @@ class AiTwitchBot(commands.Cog):
             return
         await ctx.send(f"{ctx.message.author.name} switched name to {name}")
         # set our name to the content
-        current_name = name
+        self.ai_name = name
+        # add to the personalities known
+        personalities.append(name)
 
 ## Allows async running in thread for events
 def run_bot():
@@ -722,37 +875,50 @@ def run_bot():
 
 ## Twitch Chat Bot
 def twitch_worker():
-    #asyncio.run(run_bot(), debug=args.debug)
     run_bot()
 
     while not exit_now:
-        # check if we are connected, if not connect and get channel setup, send a bot message if first time
+        # check if we are connected, if not connect and get channel setup,
+        # send a bot message if first time
         time.sleep(0.1)
         continue
 
 ## AI Conversation
 def prompt_worker():
     while not exit_now:
-        #time.sleep(0.1)
-        request = []
+        request = None
         question = ""
+        user_messages = None
 
         while not exit_now:
-            #time.sleep(0.1)
-            request = prompt_queue.get()
-            if 'question' in request and 'history' in request:
-                # extract our variables 
-                question = request['question']
-                user_messages = request['history']
-                break;
-            else:
+            if not twitch_queue.empty():
+                # Prioritize twitch_queue
+                request = twitch_queue.get()
+                logger.debug("--- prompt_worker(): Got back twitch queue packet: %s" % json.dumps(request))
+                break
+            elif not prompt_queue.empty():
+                # If twitch_queue is empty, check prompt_queue
+                request = prompt_queue.get()
                 logger.debug("--- prompt_worker(): Got back queue packet: %s" % json.dumps(request))
+                break
+            else:
+                # Both queues are empty, sleep for a bit then recheck
+                time.sleep(0.1)
                 continue
+
+        if 'question' in request and 'history' in request:
+            # extract our variables
+            question = request['question']
+            user_messages = request['history']
+        else:
+            logger.error("--- prompt_worker(): Got back bad queue packet missing question or history: %s" % json.dumps(request))
+            continue
 
         if question == 'STOP':
             output_queue.put('STOP')
             break
 
+        logger.debug("--- prompt_worker(): running request: %s" % json.dumps(request))
         output = llm.create_chat_completion(
             messages=user_messages,
             max_tokens=args.maxtokens,
@@ -825,6 +991,7 @@ def cleanup():
     image_queue.put("STOP")
     output_queue.put("STOP")
     prompt_queue.put("STOP")
+    twitch_queue.put("STOP")
     #exit_now = True
 
 def signal_handler(sig, frame):
@@ -848,15 +1015,6 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 ## Main worker thread
 def main(stdscr):
-    """
-    curses.echo()
-    # Enable keypad input
-    stdscr.keypad(True)
-    # Set up the screen
-    stdscr.clear()
-    #stdscr.refresh()
-    stdscr.addstr(0, 0, "GAIB is starting up...\n")
-    """
     print('\033c', end='')
     print("GAIB Is starting up...\n")
 
@@ -871,25 +1029,9 @@ def main(stdscr):
             ## Did we get a question to start off with on input?
             if (args.autogenerate):
                 # auto-generate prompts for 24/7 generation
-                next_question = "Continue on with the discussion"
+                next_question = "Continue the discussion"
             elif (have_ran or next_question == ""):
                 ## Episode or Question
-                """
-                if args.episode:
-                    #stdscr.addstr(0, 0, "Episode Title and Plotline: ")
-                    print("Episode Title and Plotline: ", flush=True, end='')
-                else:
-                    #stdscr.addstr(0, 0, "Question: ")
-                    print("Question: ", flush=True, end='')
-                """
-                """
-                ## Get user input
-                user_input = stdscr.getstr().decode('utf-8')
-
-                # Process user input
-                if user_input.lower() == 'exit':
-                    break  # Exit the loop if 'exit' is typed
-                """
                 user_input = get_user_input()
                 next_question = user_input
             else:
@@ -899,85 +1041,7 @@ def main(stdscr):
 
             logger.debug("\n--- Next Question: %s" % next_question)
 
-            urls = []
-            if args.geturls:
-                urls = extract_urls(next_question)
-            context = ""
-            if len(urls) <= 0:
-                if args.debug:
-                    logger.debug("--- Found no URLs in prompt")
-
-            ## URL in prompt parsing
-            try:
-                for url in urls:
-                    url = url.strip(",.;:")
-                    if args.debug:
-                        logger.debug("--- Found URL {url} in prompt input.")
-
-                    if llama_embeddings == None:
-                        llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
-                                                              n_ctx=args.embeddingscontext, verbose=args.doubledebug,
-                                                              n_gpu_layers=args.gpulayers)
-
-                    # Initialize summarization pipeline for summarizing Documents retrieved
-                    summarizer = None
-                    if args.summarizedocs and summarize == None:
-                        summarizer = pipeline("summarization")
-
-                    docs = gethttp(url, next_question, llama_embeddings, args.persistdirectory)
-                    if args.debug:
-                        logger.info("--- GetHTTP found {url} with %d docs" % len(docs))
-                    if len(docs) > 0:
-                        if args.summarizedocs:
-                            parsed_output = summarize_documents(docs) # parse_documents gets more information with less precision
-                        else:
-                            parsed_output = parse_documents(docs)
-                        context = "%s" % (parsed_output.strip().replace("\n", ', '))
-            except Exception as e:
-                logger.error("\n--- Error with url retrieval:", e)
-
-            ## Context inclusion if we have vectorDB results
-            prompt_context = ""
-            if context != "":
-                prompt_context = "Context:%s\n" % context
-
-            ## Prompt parts
-            instructions = "Use the Chat History and 'Context: <context>' section below if it has related information to help answer the question or tell the story requested."
-            role = "Do not reveal that you are using the context, it is not part of the question but a document retrieved in relation to the questions."
-            purpose = "Use the Context as inspiration and references for your answers."
-
-            ## Build prompt
-            prompt = "%s You are %s who is %s %s %s\n%s%s" % (
-                    instructions,
-                    current_name,
-                    current_personality,
-                    purpose,
-                    role,
-                    args.roleenforcer.replace('{user}', args.username).replace('{assistant}', current_name),
-                    args.promptcompletion.replace('{user_question}', next_question).replace('{context}', prompt_context))
-
-            logger.debug("--- Using Prompt: %s" % prompt)
-
-            history = messages.copy()
-
-            ## User Question
-            history.append(ChatCompletionMessage(
-                    role="user",
-                    content="%s" % prompt,
-                ))
-
-            ## History debug output
-            logger.debug("Chat History: %s" % json.dumps(history))
-
-            # Calculate the total length of all messages in history
-            total_length = sum([len(msg['content']) for msg in history])
-
-            # Cleanup history messages
-            while total_length > args.historycontext:
-                # Remove the oldest message after the system prompt
-                if len(history) > 2:
-                    total_length -= len(history[1]['content'])
-                    del history[1]
+            send_to_llm("main", args.username, next_question, [], current_name, current_personality)
 
             # Generate the Answer
             if args.episode:
@@ -987,19 +1051,26 @@ def main(stdscr):
                 #stdscr.addstr(0, 0, "Generating an Answer... ")
                 print("Generating an Answer... ")
 
-            ## Queue prompt
-            prompt_queue.put({'question': next_question, 'history': history})
-
             ## Wait for response
             response = ""
+            start_time = time.time()
             while not exit_now:
-                #time.sleep(0.1)
-                text = output_queue.get()
-                response = text + response
+                text = ""
+                if not output_queue.empty():
+                    text = output_queue.get()
+                else:
+                    current_time = time.time()
+                    if current_time - start_time > 120:
+                        break
+                    time.sleep(0.1)
+                    continue
+
                 ## audio / text output
                 if text == 'STOP':
                     break
+
                 if text != "":
+                    response = text + response
                     ## Print out tokens / text generation
                     #stdscr.addstr(0, 0, f"{text}")
                     print(text, end='', flush=True)
@@ -1009,16 +1080,18 @@ def main(stdscr):
             logger.debug("Response: %s" % response)
 
             ## Story User Question in History
-            history.append(ChatCompletionMessage(
-                    role="user",
-                    content="%s" % next_question,
-                ))
+            if next_question != ".":
+                messages.append(ChatCompletionMessage(
+                        role="user",
+                        content="%s" % next_question,
+                    ))
 
             ## AI Response History
-            messages.append(ChatCompletionMessage(
-                    role="assistant",
-                    content="%s" % response,
-                ))
+            if response != "":
+                messages.append(ChatCompletionMessage(
+                        role="assistant",
+                        content="%s" % response,
+                    ))
 
         except KeyboardInterrupt:
             stdscr.addstr(0, 0, "--- Recieved Ctrl+C, Exiting...")
@@ -1033,7 +1106,7 @@ if __name__ == "__main__":
     default_model = "models/zephyr-7b-alpha.Q8_0.gguf"
     default_embedding_model = "models/q4-openllama-platypus-3b.gguf"
 
-    default_ai_personality = "You are the wise Buddha"
+    default_ai_personality = "the wise Buddha"
 
     default_user_personality = "a seeker of wisdom who is human and looking for answers and possibly entertainment."
 
@@ -1155,24 +1228,12 @@ if __name__ == "__main__":
     ## LLM Model for Text TODO are setting gpu layers good/necessary?
     llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
-    ## System role
-    messages = [
-        ChatCompletionMessage(
-            # role="user",
-            role="system",
-            content="You are %s who is %s." % (
-                args.ainame,
-                args.aipersonality),
-        )
-    ]
-
     ## AI TTS Model for Speech
     ai_speaking_rate = args.aispeakingrate
     ai_noise_scale = args.ainoisescale
 
     user_speaking_rate = args.userspeakingrate
     user_noise_scale = args.usernoisescale
-
 
     if not args.silent:
         aimodel = VitsModel.from_pretrained(facebook_model)
@@ -1197,6 +1258,8 @@ if __name__ == "__main__":
         else:
             print("\n--- Error user samplingrate is not matching the models of %d" % usermodel.sampling_rate)
 
+    personalities.append(current_name)
+
     # Run Terminal Loop
     try:
         # Create threads
@@ -1216,7 +1279,6 @@ if __name__ == "__main__":
         #wx_thread = threading.Thread(target=start_wx_app)
         #wx_thread.start()
 
-        #curses.wrapper(main)
         main("main")
     except Exception as e:
         logger.error("\n--- Error with program startup curses wrappper: %s" % e)
