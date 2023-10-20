@@ -618,9 +618,9 @@ class AiTwitchBot(commands.Cog):
             logger.info(f"{message.author.name} said {message.content}.");
 
     # Key name of specific personality to use
-    @commands.command(name=current_name.lower())
+    @commands.command(name="message")
     async def chat_request(self, ctx: commands.Context):
-        question = ctx.message.content.replace(f"!{current_name.lower()}",'')
+        question = ctx.message.content.replace(f"!message ",'')
         logger.debug(f"--- {ctx.author.name} asked {current_name} the question: %s" % question)
         await ctx.send("Thank you for the question %s" % ctx.message.author.name)
 
