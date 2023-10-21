@@ -137,8 +137,8 @@ last_text = ""
 
 def setup_display():
     """Initialize the OpenCV window."""
-    cv2.namedWindow('Frame Server', cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('Frame Server', 800, 600)  # Initial window size
+    cv2.namedWindow('GAIB The Groovy AI Bot', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('GAIB The Groovy AI Bot', 800, 600)  # Initial window size
 
 def teardown_display():
     """Destroy the OpenCV window."""
@@ -217,19 +217,19 @@ def render_worker():
             y_pos -= 60
 
         # Make window resizable
-        cv2.namedWindow('Frame Server', cv2.WINDOW_NORMAL)
-        cv2.imshow('Frame Server', image)
+        cv2.namedWindow('GAIB The Groovy AI Bot', cv2.WINDOW_NORMAL)
+        cv2.imshow('GAIB The Groovy AI Bot', image)
 
-        k = cv2.waitKey(1) #& 0xFF  # Mask to get last 8 bits
-        if k == ord('f'):
-            cv2.setWindowProperty('Frame Server', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        elif k == ord('g'):
-            cv2.setWindowProperty('Frame Server', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-        elif k == ord('q'):
-            cv2.destroyAllWindows()
-            #exit_now = True
-            return False
-            exit()
+    k = cv2.waitKey(1) #& 0xFF  # Mask to get last 8 bits
+    if k == ord('f'):
+        cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    elif k == ord('g'):
+        cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+    elif k == ord('q'):
+        cv2.destroyAllWindows()
+        #exit_now = True
+        return False
+        exit()
 
     return True
 
