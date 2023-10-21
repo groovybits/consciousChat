@@ -318,12 +318,12 @@ def render_worker():
             border_thickness = 15  # Adjusted for bolder border
 
             for line in reversed(wrapped_text):
+                text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_DUPLEX, font_size, font_thickness)[0]
+                x_pos = (image.shape[1] - text_width) // 2  # Center the text
                 if contains_japanese(line):
                     # Use your method to draw Japanese text
                     draw_japanese_text_on_image(image, line, (x_pos, y_pos), args.japanese_font, 40)
                 else:
-                    text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_DUPLEX, font_size, font_thickness)[0]
-                    x_pos = (image.shape[1] - text_width) // 2  # Center the text
                     cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (0, 0, 0), border_thickness)
                     cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (255, 255, 255), font_thickness)
                 y_pos -= 60
