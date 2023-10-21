@@ -214,7 +214,7 @@ def setup_display():
         default_img = draw_default_frame_with_logo() #draw_default_frame() #np.zeros((args.width, args.height, 3), dtype=np.uint8)
         cv2.imshow('GAIB The Groovy AI Bot', default_img)
 
-        cv2.waitKey(1)  # Allow some time for GUI events
+        cv2.waitKey(10)  # Allow some time for GUI events
 
         if args.fullscreen:
             cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
@@ -301,14 +301,15 @@ def render_worker():
             #if ((image != last_image) or (text != last_text)):
             cv2.imshow('GAIB The Groovy AI Bot', image)
 
-            k = cv2.waitKey(1) #& 0xFF  # Mask to get last 8 bits
+            k = cv2.waitKey(10) & 0xFF  # Mask to get last 8 bits
+            logger.info("Got keystroke command in image: %d" % k)
             if k == ord('f'):
                 cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
                 args.fullscreen = True
             elif k == ord('m'):
                 cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
                 args.fullscreen = False
-            elif k == ord('q'):
+            elif k == ord('q') or k == 27:
                 args.fullscreen = False
                 cv2.destroyAllWindows()
                 return False
@@ -1222,6 +1223,8 @@ def cleanup():
     output_queue.put("STOP")
     prompt_queue.put("STOP")
     twitch_queue.put("STOP")
+    mux_text_queue.put("STOP")
+    mux_image_queue.put("STOP")
     exit_now = True
 
 def signal_handler(sig, frame):
@@ -1266,7 +1269,7 @@ def main(stdscr):
             ## Did we get a question to start off with on input?
             if (args.autogenerate):
                 # auto-generate prompts for 24/7 generation
-                next_question = "..."
+                next_question = ""
             elif (have_ran or next_question == ""):
                 ## Episode or Question
                 user_input = get_user_input()
@@ -1295,7 +1298,7 @@ def main(stdscr):
                 if args.render:
                     if render_worker() == False:
                         logger.warning("render_worker exited false in main frame loop")
-                    time.sleep(0.3)
+                    time.sleep(0.6)
 
                 text = ""
                 if not output_queue.empty():
@@ -1387,7 +1390,7 @@ if __name__ == "__main__":
                         help="File path to embedding model to load and use. Use a small simple one to keep it fast. Default is %s" % default_embedding_model)
     parser.add_argument("-ag", "--autogenerate", action="store_true", default=False, help="Keep autogenerating the conversation without interactive prompting.")
     parser.add_argument("-ss", "--streamspeak", action="store_true", default=False, help="Speak the text as tts token count chunks.")
-    parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=25, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
+    parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=10, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
     parser.add_argument("-aittss", "--aittsseed", type=int, default=1000,
                         help="AI Bot TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow variance per line spoken.")
     parser.add_argument("-usttss", "--usttsseed", type=int, default=100000,
