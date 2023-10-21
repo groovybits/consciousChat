@@ -38,13 +38,11 @@ import threading
 import time
 import signal
 import sys
-import wx
 from PIL import Image
 from tqdm import tqdm
 import uuid
 import psutil
 import wx
-#import curses
 import functools
 from dotenv import load_dotenv
 from twitchio.ext import commands
@@ -351,6 +349,7 @@ def image_to_ascii(image, width):
     return ascii_image
 
 def image_worker():
+    last_image_generation = time.time()
     while not exit_now:
         try:
             llm_text = ""
@@ -374,7 +373,7 @@ def image_worker():
                     max_tokens=200,
                     temperature=0.2,
                     stream=False,
-                    stop=["Image:","\n"]
+                    stop=["Description:"]
                 )
 
                 ## Confirm we have an image prompt
@@ -383,6 +382,7 @@ def image_worker():
                     if len(image_prompt_data["choices"]) > 0:
                         if 'text' in image_prompt_data["choices"][0]:
                             image_prompt = image_prompt_data["choices"][0]['text']
+                            logger.info("Got Image Prompt: %s" % image_prompt)
 
                 if image_prompt.strip() == "":
                     logger.error("image prompt generation failed, using original prompt: ", json.dumps(image_prompt_data))
@@ -390,6 +390,10 @@ def image_worker():
             except Exception as e:
                 logger.error("image prompt generation llm didn't get any result:", json.dumps(e))
                 image_prompt = llm_text
+
+            logger.info("Image generation after %d seconds" % (time.time() - last_image_generation))
+            if (time.time() - last_image_generation) > 3:
+                last_image_generation = time.time()
 
             # First-time "warmup" pass if PyTorch version is 1.13 (see explanation above)
             version = [int(v) for v in torch.__version__.split(".")]
@@ -872,8 +876,6 @@ def build_prompt(username, question, ainame, aipersonality):
 
 def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_personality):
     try:
-        prompt = build_prompt(username, question, ai_name, ai_personality)
-
         logger.info(f"send_to_llm: recieved a {queue_name} message from {username} for personality {ai_name}")
         logger.info(f"send_to_llm: question {question}")
 
@@ -887,10 +889,44 @@ def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_persona
             )
         ]
 
-        history.extend(ChatCompletionMessage(role=m['role'], content=m['content']) for m in messages)
+        # Main Queue
+        if queue_name == "main":
+            history.extend(ChatCompletionMessage(role=m['role'], content=m['content']) for m in messages)
+
+        # User Queue
         history.extend(ChatCompletionMessage(role=m['role'], content=m['content']) for m in userhistory)
 
+        summary_message = question
+        """
+        ## Create a question from the question
+        try:
+            print("LLM FORMAT: %s" % question)
+            summary_message_data = ""
+            summary_message_data = llm_format(
+                    f"Summarize the following message from the twitch user {username} to {ai_name} who is {ai_personality}. Create a prompt to give to a chat completion LLM to generate a converasational response. Do not change it and keep the same sentiment, optimize and expland it how you feel would be best for an LLM Conversation.\n\nQuestion: {question}\nAnswer:",
+                max_tokens=300,
+                temperature=0.7,
+                stop=["Question:""]
+            )
+            logger.debug(f"llm_format question {question} grooming results: %s" % summary_message_data)
+
+            ## Confirm we have an image prompt
+            if "choices" in summary_message_data:
+                if len(summary_message_data["choices"]) > 0:
+                    if "text" in summary_message_data["choices"][0]:
+                        summary_message = summary_message_data["choices"][0]['text']
+            else:
+                logger.error("summary prompt generation failed, using original prompt: ", json.dumps(summary_prompt_data))
+
+            ## Put the question into the history
+            if summmary_message.strip() == "":
+                logger.error("summary prompt generation failed, using original prompt: ", json.dumps(summary_prompt_data))
+        except Exception as e:
+            logger.error("answer prompt generation llm didn't get any result:", json.dumps(e))
+            """
+
         ## User Question
+        prompt = build_prompt(username, summary_message, ai_name, ai_personality)
         history.append(ChatCompletionMessage(
                 role="user",
                 content="%s" % prompt,
@@ -1249,10 +1285,6 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-# wxPython main loop
-#def start_wx_app():
-#   app.MainLoop()
-
 ## Main worker thread
 def main(stdscr):
     print('\033c', end='')
@@ -1528,6 +1560,10 @@ if __name__ == "__main__":
     llm_image = Llama(model_path=args.smallmodel,
                       n_ctx=args.smallcontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
+    ## LLM Model for image prompt generation thread
+    llm_format = Llama(model_path=args.smallmodel,
+                      n_ctx=args.smallcontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+
     ## AI TTS Model for Speech
     ai_speaking_rate = args.aispeakingrate
     ai_noise_scale = args.ainoisescale
@@ -1574,10 +1610,6 @@ if __name__ == "__main__":
         if args.twitch:
             twitch_thread = threading.Thread(target=twitch_worker)
             twitch_thread.start()
-
-        # Start the wxPython app in a separate thread
-        #wx_thread = threading.Thread(target=start_wx_app)
-        #wx_thread.start()
 
         main("main")
     except Exception as e:
