@@ -221,12 +221,16 @@ def render_worker():
         cv2.namedWindow('Frame Server', cv2.WINDOW_NORMAL)
         cv2.imshow('Frame Server', image)
 
-        # Check for 'f' key press to toggle fullscreen
-        k = cv2.waitKey(1) 
+        k = cv2.waitKey(1) #& 0xFF  # Mask to get last 8 bits
         if k == ord('f'):
             cv2.setWindowProperty('Frame Server', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        elif k == ord('g'):  # You can use another key if you like
+        elif k == ord('g'):
             cv2.setWindowProperty('Frame Server', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+        elif k == ord('q'):
+            cv2.destroyAllWindows()
+            exit_now = True
+            return False
+            #exit()  # You can replace this with a mechanism to close only the window and not the entire application
 
     return True
 
@@ -1170,6 +1174,7 @@ def main(stdscr):
                 ## render
                 if args.render:
                     render_worker()
+                    time.sleep(0.3)
 
                 text = ""
                 if not output_queue.empty():
@@ -1183,7 +1188,7 @@ def main(stdscr):
                     current_time = time.time()
                     if current_time - start_time > 120:
                         break
-                    time.sleep(0.1)
+                    time.sleep(0.3)
                     continue
 
                 if text != "":
