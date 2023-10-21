@@ -317,54 +317,74 @@ def image_to_ascii(image, width):
 
 def image_worker():
     while not exit_now:
-        image_prompt = ""
+        llm_text = ""
         if not image_queue.empty():
-            image_prompt = image_queue.get()
+            llm_text = image_queue.get()
+            if llm_text.strip() == "":
+                time.sleep(.01)
+                continue
         else:
             time.sleep(.01)
             continue
 
-        if exit_now or image_prompt == 'STOP':
+        if exit_now or llm_text == 'STOP':
             break
 
-        else:
-            # First-time "warmup" pass if PyTorch version is 1.13 (see explanation above)
-            version = [int(v) for v in torch.__version__.split(".")]
+        image_prompt_data = None
+        image_prompt = ""
+        try:
+            image_prompt_data = llm_image(
+                "%s\n\nDescription: %s\nImage:" % (args.systemimageprompt, llm_text),
+                max_tokens=200,
+                temperature=0.2,
+                stream=False,
+                stop=["Image:","\n"]
+            )
 
-            # Check if version is less than 1.13
-            if version[0] == 1 and version[1] < 13:
-                _ = pipe(prompt, num_inference_steps=1)
+            ## Confirm we have an image prompt
+            image_prompt = ""
+            if 'choices' in image_prompt_data:
+                if len(image_prompt_data["choices"]) > 0:
+                    if 'text' in image_prompt_data["choices"][0]:
+                        image_prompt = image_prompt_data["choices"][0]['text']
 
-            image = pipe(image_prompt,
-                         height=512,
-                         width=512,
-                         num_inference_steps=50,
-                         guidance_scale=7.5,
-                         num_images_per_prompt=1
-                    ).images[0]
+            if image_prompt.strip() == "":
+                logger.error("image prompt generation failed, using original prompt: ", json.dumps(image_prompt_data))
+                image_prompt = llm_text
+        except Exception as e:
+            logger.error("image prompt generation llm didn't get any result:", json.dumps(e))
+            image_prompt = llm_text
 
-            # Store the image in the history and save to disk
-            if args.saveimages:
-                imgname = image_history.add_image(image, image_prompt)
-                logger.debug("--- Image History: %s" % imgname)
+        # First-time "warmup" pass if PyTorch version is 1.13 (see explanation above)
+        version = [int(v) for v in torch.__version__.split(".")]
 
-                logger.info("--- Stable Diffusion got an image: %s\n" % imgname[:80])
+        # Check if version is less than 1.13
+        if version[0] == 1 and version[1] < 13:
+            _ = pipe(image_prompt, num_inference_steps=1)
 
-            ## render
-            if args.render:
-                ## Mux Queue the image
-                mux_image_queue.put(image)
-                new_image_data_event.set()
+        image = pipe(image_prompt,
+                     height=512,
+                     width=512,
+                     num_inference_steps=50,
+                     guidance_scale=7.5,
+                     num_images_per_prompt=1
+                ).images[0]
 
-            ## ASCII Printout of Image
-            if args.ascii:
-                print("\n", end='', flush=True)
-                print(image_to_ascii(image, 50), end='', flush=True)
+        # Store the image in the history and save to disk
+        if args.saveimages:
+            imgname = image_history.add_image(image, image_prompt)
+            logger.info("--- Stable Diffusion got an image: %s\n" % imgname)
 
-            # Update the image in the app
-            #app.frame.update_display()
-            #app.update_image(image)
+        ## render
+        if args.render:
+            ## Mux Queue the image
+            mux_image_queue.put(image)
+            new_image_data_event.set()
 
+        ## ASCII Printout of Image
+        if args.ascii:
+            print("\n", end='', flush=True)
+            print(image_to_ascii(image, 50), end='', flush=True)
 
 def speak_worker():
     encoding_buffer_text = ""
@@ -557,8 +577,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
     url_directory = parsed_url.netloc.replace('.', '_')
     url_directory = os.path.join(persistdirectory, url_directory)
 
-    if args.debug:
-        logger.info("--- gethttp() parsed URL %s:" % parsed_url)
+    logger.info("--- gethttp() parsed URL %s:" % parsed_url)
 
     # Create the directory if it does not exist
     if not os.path.exists(url_directory):
@@ -616,7 +635,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
 
     ## Only save if we found something
     if len(docs) > 0:
-        logger.debug("Retrieved documents from Vector DB:", docs)
+        logger.info("Retrieved documents from Vector DB:", docs)
         db_conn = sqlite3.connect(args.urlsdb)
         ## Save url into db
         db_conn.execute("INSERT INTO urls (url) VALUES (?)", (url,))
@@ -715,8 +734,7 @@ def encode_line(line, speaker = "ai"):
                 aitext = romanized_aitext
             else:
                 logger.error("--- Error Romanizing Text: %s" % aitext)
-            if args.debug:
-                logger.debug("--- Romanized Text: %s" % romanized_aitext)
+            logger.debug("--- Romanized Text: %s" % romanized_aitext)
     except Exception as e:
         logger.error("--- Error romanizing input: %s" %  e)
 
@@ -750,19 +768,17 @@ def build_prompt(username, question, ainame, aipersonality):
         urls = extract_urls(question)
     context = ""
     if len(urls) <= 0:
-        if args.debug:
-            logger.debug("--- Found no URLs in prompt")
+        logger.info("--- Found no URLs in prompt")
 
     ## URL in prompt parsing
     try:
         for url in urls:
             url = url.strip(",.;:")
-            if args.debug:
-                logger.debug("--- Found URL %s in prompt input." % url)
+            logger.info("--- Found URL %s in prompt input." % url)
 
             if llama_embeddings == None:
                 llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
-                                                      n_ctx=args.embeddingscontext, verbose=args.doubledebug,
+                                                      n_ctx=args.embeddingscontext, verbose=args.debug,
                                                       n_gpu_layers=args.gpulayers)
 
             # Initialize summarization pipeline for summarizing Documents retrieved
@@ -771,8 +787,7 @@ def build_prompt(username, question, ainame, aipersonality):
                 summarizer = pipeline("summarization")
 
             docs = gethttp(url, question, llama_embeddings, args.persistdirectory)
-            if args.debug:
-                logger.info("--- GetHTTP found {url} with %d docs" % len(docs))
+            logger.info("--- GetHTTP found {url} with %d docs" % len(docs))
             if len(docs) > 0:
                 if args.summarizedocs:
                     parsed_output = summarize_documents(docs) # parse_documents gets more information with less precision
@@ -781,7 +796,7 @@ def build_prompt(username, question, ainame, aipersonality):
                 context = "%s" % (parsed_output.strip().replace("\n", ', '))
 
     except Exception as e:
-        logger.error("\n--- Error with url retrieval:", e)
+        logger.error("--- Error with url retrieval:", e)
 
     ## Context inclusion if we have vectorDB results
     prompt_context = ""
@@ -804,7 +819,7 @@ def build_prompt(username, question, ainame, aipersonality):
             args.roleenforcer.replace('{user}', username).replace('{assistant}', current_name),
             args.promptcompletion.replace('{user_question}', question).replace('{context}', prompt_context))
 
-    logger.debug(f"--- {username} with {question} is Using Prompt: %s" % prompt)
+    logger.info(f"--- {username} with {question} is Using Prompt: %s" % prompt)
 
     return prompt
 
@@ -1087,8 +1102,7 @@ def prompt_worker():
 
             delta = item["choices"][0]['delta']
             if 'role' in delta:
-                if args.debug:
-                    logger.debug(f"--- Found Role: {delta['role']}: ")
+                logger.debug(f"--- Found Role: {delta['role']}: ")
                 role = delta['role']
 
             # Check if we got a token
@@ -1344,8 +1358,18 @@ if __name__ == "__main__":
     parser.add_argument("-he", "--height", type=int, default=1080, help="Height of rendered window, only used with -ren")
     parser.add_argument("-as", "--ascii", action="store_true", default=False, help="Render ascii images")
     parser.add_argument("-ph", "--purgehistory", action="store_true", default=False, help="Purge history")
+    parser.add_argument("-sip", "--systemimageprompt", type=str,
+                        default="You are an image prompt generator,take the paragraph and summarize it into a description for image generation.", help="System prompt for image prompt generation from question or story chunks.")
 
     args = parser.parse_args()
+
+    ## Debug
+    if args.debug:
+        args.loglevel = "info"
+
+	## Lots of debuggin
+    if args.doubledebug:
+        args.loglevel = "debug"
 
     LOGLEVEL = logger.INFO
 
@@ -1390,10 +1414,6 @@ if __name__ == "__main__":
     if args.historycontext > args.context:
         args.historycontext = args.context
 
-	## Lots of debuggin
-    if args.doubledebug:
-        args.debug = True
-
 	## setup episode mode
     if args.episode:
         args.roleenforcer = "%s Format the output like a TV episode script using markdown.\n" % args.roleenforcer
@@ -1407,6 +1427,10 @@ if __name__ == "__main__":
 
     ## LLM Model for Text TODO are setting gpu layers good/necessary?
     llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+
+    ## LLM Model for image prompt generation thread
+    llm_image = Llama(model_path=args.embeddingmodel,
+                      n_ctx=args.embeddingscontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
     ## AI TTS Model for Speech
     ai_speaking_rate = args.aispeakingrate
