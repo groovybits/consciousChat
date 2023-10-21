@@ -839,12 +839,13 @@ def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_persona
     # Calculate the total length of all messages in history
     total_length = sum([len(msg['content']) for msg in history])
 
-    # Cleanup history messages
-    while total_length > args.historycontext:
-        # Remove the oldest message after the system prompt
-        if len(history) > 2:
-            total_length -= len(history[1]['content'])
-            del history[1]
+    if args.purgehistory:
+        # Cleanup history messages
+        while total_length > args.historycontext:
+            # Remove the oldest message after the system prompt
+            if len(history) > 2:
+                total_length -= len(history[1]['content'])
+                del history[1]
 
     ## Queue prompt
     if queue_name == 'twitch':
@@ -895,14 +896,14 @@ class AiTwitchBot(commands.Cog):
         cleaned_question = question.translate(translation_table)
 
         # Split the cleaned question into words and get the first word
-        ai_name = cleaned_question.split()[0] if cleaned_question else None
+        ainame = cleaned_question.split()[0] if cleaned_question else None
 
         # Check our list of personalities
         if ai_name not in personalities:
             logger.debug(f"--- {name} asked for {self.ai_name} but it doesn't exist, using default.")
-            ai_name = self.ai_name    
+            ainame = self.ai_name    
 
-        logger.debug(f"--- {name} asked {ai_name} the question: {question}")
+        logger.debug(f"--- {name} asked {ainame} the question: {question}")
 
         await ctx.send(f"Thank you for the question {name}")
 
@@ -941,10 +942,10 @@ class AiTwitchBot(commands.Cog):
         db_conn.close()
 
         # Formulate the question and append it to history
-        formatted_question = f"{name} asked {ai_name} the question {question}"
+        formatted_question = f"{name} asked {ai_ame} the question {question}"
         history.append(ChatCompletionMessage(role="user", content=formatted_question))
 
-        send_to_llm("twitch", name, formatted_question, history, ai_name, self.ai_personality)
+        send_to_llm("twitch", name, formatted_question, history, ainame, self.ai_personality)
 
     # set the personality of the bot
     @commands.command(name="personality")
@@ -1342,6 +1343,7 @@ if __name__ == "__main__":
     parser.add_argument("-wi", "--width", type=int, default=1920, help="Width of rendered window, only used with -ren")
     parser.add_argument("-he", "--height", type=int, default=1080, help="Height of rendered window, only used with -ren")
     parser.add_argument("-as", "--ascii", action="store_true", default=False, help="Render ascii images")
+    parser.add_argument("-ph", "--purgehistory", action="store_true", default=False, help="Purge history")
 
     args = parser.parse_args()
 
