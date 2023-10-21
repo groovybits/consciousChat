@@ -137,8 +137,13 @@ last_text = ""
 
 def setup_display():
     """Initialize the OpenCV window."""
-    cv2.namedWindow('GAIB The Groovy AI Bot', cv2.WINDOW_NORMAL)
-    cv2.resizeWindow('GAIB The Groovy AI Bot', 800, 600)  # Initial window size
+    if args.fullscreen:
+        cv2.namedWindow('GAIB The Groovy AI Bot', cv2.WINDOW_FULLSCREEN)
+        #cv2.resizeWindow('GAIB The Groovy AI Bot', 800, 600)  # Initial window size
+        #cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    else:
+        cv2.namedWindow('GAIB The Groovy AI Bot', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('GAIB The Groovy AI Bot', 1920, 1080)  # Initial window size
 
 def teardown_display():
     """Destroy the OpenCV window."""
@@ -218,18 +223,16 @@ def render_worker():
 
         # Make window resizable
         cv2.namedWindow('GAIB The Groovy AI Bot', cv2.WINDOW_NORMAL)
+        #if ((image != last_image) or (text != last_text)):
         cv2.imshow('GAIB The Groovy AI Bot', image)
-
-    k = cv2.waitKey(1) #& 0xFF  # Mask to get last 8 bits
-    if k == ord('f'):
-        cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-    elif k == ord('g'):
-        cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-    elif k == ord('q'):
-        cv2.destroyAllWindows()
-        #exit_now = True
-        return False
-        exit()
+        k = cv2.waitKey(1) #& 0xFF  # Mask to get last 8 bits
+        if k == ord('f'):
+            cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        elif k == ord('m'):
+            cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+        elif k == ord('q'):
+            cv2.destroyAllWindows()
+            return False
 
     return True
 
@@ -1319,6 +1322,7 @@ if __name__ == "__main__":
     parser.add_argument("-he", "--height", type=int, default=1080, help="Height of rendered window, only used with -ren")
     parser.add_argument("-as", "--ascii", action="store_true", default=False, help="Render ascii images")
     parser.add_argument("-ph", "--purgehistory", action="store_true", default=False, help="Purge history")
+    parser.add_argument("-fs", "--fullscreen", action="store_true", default=False, help="Full Screen")
     parser.add_argument("-sip", "--systemimageprompt", type=str,
                         default="You are an image prompt generator,take the paragraph and summarize it into a description for image generation.", help="System prompt for image prompt generation from question or story chunks.")
 
