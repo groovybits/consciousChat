@@ -204,11 +204,11 @@ def render_worker():
         image = cv2.resize(image, (args.width, args.height), interpolation=cv2.INTER_LINEAR)
 
         # Wrap text
-        wrapped_text = textwrap.wrap(text, width=50)  # Adjusted width
-        y_pos = image.shape[0] - 100  # Adjusted height from bottom
-        font_size = 1.5
-        font_thickness = 3  # Adjusted for bolder font
-        border_thickness = 7  # Adjusted for bolder border
+        wrapped_text = textwrap.wrap(text, width=45)  # Adjusted width
+        y_pos = image.shape[0] - 40  # Adjusted height from bottom
+        font_size = 2
+        font_thickness = 4  # Adjusted for bolder font
+        border_thickness = 15  # Adjusted for bolder border
 
         for line in reversed(wrapped_text):
             text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_size, font_thickness)[0]
@@ -1301,7 +1301,7 @@ if __name__ == "__main__":
                         help="File path to embedding model to load and use. Use a small simple one to keep it fast. Default is %s" % default_embedding_model)
     parser.add_argument("-ag", "--autogenerate", action="store_true", default=False, help="Keep autogenerating the conversation without interactive prompting.")
     parser.add_argument("-ss", "--streamspeak", action="store_true", default=False, help="Speak the text as tts token count chunks.")
-    parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=50, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
+    parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=25, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
     parser.add_argument("-aittss", "--aittsseed", type=int, default=1000,
                         help="AI Bot TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow variance per line spoken.")
     parser.add_argument("-usttss", "--usttsseed", type=int, default=100000,
