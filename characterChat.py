@@ -1434,6 +1434,9 @@ def main(stdscr):
         time.sleep(0.1)
         next_question = ""
 
+        while not twitch_queue.empty() and not exit_now:
+            time.sleep(10)
+
         try:
             ## Did we get a question to start off with on input?
             if (args.autogenerate):
@@ -1583,7 +1586,7 @@ if __name__ == "__main__":
                         help="User sampling rate of TTS speaking, do not change from 16000!")
     parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
                         help="Stop tokens to use, do not change unless you know what you are doing!")
-    parser.add_argument("-ctx", "--context", type=int, default=32768, help="Model context, default 32768.")
+    parser.add_argument("-ctx", "--context", type=int, default=512768, help="Model context, default 512768.")
     parser.add_argument("-sctx", "--smallcontext", type=int, default=4096, help="Model context for image generation, default 4096.")
     parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
     parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
