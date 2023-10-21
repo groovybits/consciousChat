@@ -115,6 +115,60 @@ new_image_data_event = threading.Event()
 #speak_queue_lock = threading.Lock()
 #image_queue_lock = threading.Lock()
 
+def overlay_video_on_image(bg_img, video_path, position, border_thickness=5, border_color=(0, 255, 0)):
+    # Load video
+    cap = cv2.VideoCapture(video_path)
+    video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    aspect_ratio = video_width / video_height
+
+    # Set the desired height for the video frame as 25% of the image height
+    height = int(0.25 * bg_img.shape[0])
+    new_width = int(aspect_ratio * height)
+    new_height = height
+
+    # Ensure the video frame will fit within the image at the specified position
+    x, y = position
+    if (y + new_height > bg_img.shape[0]) or (x + new_width > bg_img.shape[1]):
+        raise ValueError("The resized video frame doesn't fit the image at the specified position.")
+
+    # Create a mask for rounded corners
+    mask = np.zeros((new_height, new_width), dtype=np.uint8)
+    cv2.rectangle(mask, (border_thickness, border_thickness), (new_width-border_thickness, new_height-border_thickness), 255, -1)
+    cv2.circle(mask, (border_thickness, border_thickness), border_thickness, 255, -1)
+    cv2.circle(mask, (new_width-border_thickness, border_thickness), border_thickness, 255, -1)
+    cv2.circle(mask, (border_thickness, new_height-border_thickness), border_thickness, 255, -1)
+    cv2.circle(mask, (new_width-border_thickness, new_height-border_thickness), border_thickness, 255, -1)
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Resize the frame
+        frame = cv2.resize(frame, (new_width, new_height))
+
+        # Apply rounded corners using the mask
+        frame = cv2.bitwise_and(frame, frame, mask=mask)
+
+        # Draw the border (like a TV)
+        cv2.rectangle(frame, (0, 0), (new_width, new_height), border_color, border_thickness)
+
+        # Check the shapes before overlaying
+        if frame.shape == bg_img[y:y+new_height, x:x+new_width].shape:
+            bg_img[y:y+new_height, x:x+new_width] = cv2.addWeighted(bg_img[y:y+new_height, x:x+new_width], 0.7, frame, 0.3, 0)
+        else:
+            print(f"Error: Mismatch in shapes. Frame: {frame.shape}, Subsection of BG image: {bg_img[y:y+new_height, x:x+new_width].shape}")
+            break
+
+        cv2.imshow('Overlay', bg_img)
+        if cv2.waitKey(30) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+    return bg_img  # Return the final image with the video overlay
+
 def simulate_image_generation(num_samples=5):
     for _ in range(num_samples):
         # Simulate image data generation
@@ -151,7 +205,7 @@ def draw_japanese_text_on_image(image_np, text, position, font_path, font_size):
     bbox = font.getbbox(text)
     text_width, text_height = bbox[2], bbox[3]
     y = y - text_height
-    x = x + 80
+    x = x + text_width / 2
 
     # Draw text border (outline)
     for i in range(-border_width, border_width + 1):
@@ -167,7 +221,7 @@ def draw_japanese_text_on_image(image_np, text, position, font_path, font_size):
     return image_np
 
 ## Main logo startup
-def draw_default_frame_with_logo(logo_path="pages/logo.png"):
+def draw_default_frame_with_logo(logo_path="pages/logo.png", video_path="pages/video.mp4"):
     try:
         # Create a black image
         default_img = np.zeros((args.height, args.width, 3), dtype=np.uint8)
@@ -204,9 +258,12 @@ def draw_default_frame_with_logo(logo_path="pages/logo.png"):
         else:
             default_img[y_offset:y_offset+logo_img.shape[0], x_offset:x_offset+logo_img.shape[1]] = logo_img
 
+        ### TODO Overlay video pip
+        #default_img = overlay_video_on_image(default_img, video_path, (10, -5), 96)
+
         return default_img
     except Exception as e:
-        logger.error("Error in draw_default_frame_with_logo exeption:", e)
+        logger.error("Error in draw_default_frame_with_logo exception: %s", str(e))
 
     return None
 
@@ -952,7 +1009,7 @@ def build_prompt(username, question, ainame, aipersonality):
 
         return prompt
     except Exception as e:
-        logger.error("Error exception in prompt buidling function: %s" % e)
+        logger.error("Error exception in prompt buidling function: %s" % str(e))
 
 def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_personality):
     try:
@@ -1003,7 +1060,7 @@ def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_persona
                 logger.error("summary prompt generation failed, using original prompt: ", json.dumps(summary_prompt_data))
         except Exception as e:
             logger.error("answer prompt generation llm didn't get any result:", json.dumps(e))
-            """
+        """
 
         ## User Question
         prompt = build_prompt(username, summary_message, ai_name, ai_personality)
@@ -1032,7 +1089,7 @@ def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_persona
         else:
             prompt_queue.put({'question': question, 'history': history})
     except Exception as e:
-        logger.error("Error exception in llm execution: %s" % e)
+        logger.error("Error exception in llm execution: %s" % str(e))
 
 ## Twitch chat responses
 class AiTwitchBot(commands.Cog):
@@ -1053,7 +1110,7 @@ class AiTwitchBot(commands.Cog):
             ws = self.bot._ws  # this is only needed to send messages within event_ready
             await ws.send_privmsg(os.environ['CHANNEL'], f"/me has landed!")
         except Exception as e:
-            logger.error("Error in event_ready twitch bot:", e)
+            logger.error("Error in event_ready twitch bot: %s" % str(e))
 
     ## Message sent in chat
     async def event_message(self, message):
@@ -1068,7 +1125,7 @@ class AiTwitchBot(commands.Cog):
 
             await self.bot.handle_commands(message)
         except Exception as e:
-            logger.error("Error in event_message twitch bot:", e)
+            logger.error("Error in event_message twitch bot: %s" % str(e))
 
     @commands.command(name="message")
     async def chat_request(self, ctx: commands.Context):
@@ -1133,7 +1190,7 @@ class AiTwitchBot(commands.Cog):
 
             send_to_llm("twitch", name, formatted_question, history, ainame, self.ai_personality)
         except Exception as e:
-            logger.error("Error in chat_request twitch bot:", e)
+            logger.error("Error in chat_request twitch bot: %s" % str(e))
 
     # set the personality of the bot
     @commands.command(name="personality")
@@ -1155,7 +1212,7 @@ class AiTwitchBot(commands.Cog):
             # set our personality to the content
             self.ai_personality = personality
         except Exception as e:
-            logger.error("Error in personality command twitch bot:", e)
+            logger.error("Error in personality command twitch bot: %s" % str(e))
 
     # set the name of the bot
     @commands.command(name="name")
@@ -1179,7 +1236,7 @@ class AiTwitchBot(commands.Cog):
             # add to the personalities known
             personalities.append(name)
         except Exception as e:
-            logger.error("Error in name command twitch bot:", e)
+            logger.error("Error in name command twitch bot: %s" % str(e))
 
 ## Allows async running in thread for events
 def run_bot():
@@ -1204,7 +1261,7 @@ def run_bot():
         finally:
             loop.close()
     except Exception as e:
-        logger.error("Error in run_bot():", e)
+        logger.error("Error in run_bot(): %s" % str(e))
 
 ## Twitch Chat Bot
 def twitch_worker():
@@ -1217,7 +1274,7 @@ def twitch_worker():
             time.sleep(0.1)
             continue
     except Exception as e:
-        logger.error("Error in twitch worker:", e)
+        logger.error("Error in twitch worker: %s" % str(e))
 
 ## AI Conversation
 def prompt_worker():
@@ -1328,7 +1385,7 @@ def prompt_worker():
             # Stop the output loop
             output_queue.put('STOP')
         except Exception as e:
-            logger.error("Error in prompt worker:", e)
+            logger.error("Error in prompt worker: %s" % str(e))
 
 def cleanup():
     # When you're ready to exit the program:
@@ -1353,7 +1410,7 @@ def signal_handler(sig, frame):
         cleanup()
         sys.exit(1)
     except Exception as e:
-        logger.error("Error in signal handler:", e)
+        logger.error("Error in signal handler: %s" % str(e))
         sys.exit(1)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -1689,7 +1746,7 @@ if __name__ == "__main__":
 
         main("main")
     except Exception as e:
-        logger.error("--- Error with program startup curses wrappper: %s" % e)
+        logger.error("--- Error with program startup curses wrappper: %s" % str(e))
     finally:
         cleanup()
         speak_thread.join()  # Wait for the speaking thread to finish
