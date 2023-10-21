@@ -18,3 +18,4 @@ wxPython
 python-dotenv
 psutil
 opencv-python
+sentence-transformers

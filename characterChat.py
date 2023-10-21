@@ -50,6 +50,7 @@ import textwrap
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from chromadb.utils import embedding_functions
 
 """
 import psutil
@@ -133,23 +134,39 @@ def simulate_image_generation(num_samples=5):
 last_image = None
 last_text = ""
 
-## draw_japanese_text_on_image(img, "こんにちは", (50, 250), font_path, 40)
+## Japanese writing on images
 def draw_japanese_text_on_image(image_np, text, position, font_path, font_size):
     # Convert to a PIL Image
     image_pil = Image.fromarray(cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB))
-    
+
     # Prepare drawing context
     draw = ImageDraw.Draw(image_pil)
     font = ImageFont.truetype(font_path, font_size)
-    
+
+    # Define the border width for the text
+    border_width = 5
+
+    # Get text size using getbbox
+    x, y = position
+    bbox = font.getbbox(text)
+    text_width, text_height = bbox[2], bbox[3]
+    y = y - text_height
+    x = x + 80
+
+    # Draw text border (outline)
+    for i in range(-border_width, border_width + 1):
+        for j in range(-border_width, border_width + 1):
+            draw.text((x + i, y + j), text, font=font, fill=(0, 0, 0))  # Black border
+
     # Draw text on image
-    draw.text(position, text, font=font, fill=(255, 255, 255))
-    
+    draw.text((x, y), text, font=font, fill=(255, 255, 255))  # White fill
+
     # Convert back to NumPy array
     image_np = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
-    
+
     return image_np
 
+## Main logo startup
 def draw_default_frame_with_logo(logo_path="pages/logo.png"):
     try:
         # Create a black image
@@ -157,9 +174,9 @@ def draw_default_frame_with_logo(logo_path="pages/logo.png"):
 
         # Text settings
         text = "The Groovy AI Bot"
-        font_scale = 2
-        font_thickness = 4
-        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 3
+        font_thickness = 6
+        font = cv2.FONT_HERSHEY_DUPLEX
         color = (255, 255, 255)  # White color
 
         # Calculate text size to center the text
@@ -193,6 +210,7 @@ def draw_default_frame_with_logo(logo_path="pages/logo.png"):
 
     return None
 
+## Black Frame
 def draw_default_frame():
     try:
         # Create a black image
@@ -219,6 +237,7 @@ def draw_default_frame():
 
     return None
 
+## Setup our image buffer for display
 def setup_display():
     """Initialize the OpenCV window."""
     try:
@@ -234,12 +253,42 @@ def setup_display():
         if args.fullscreen:
             cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     except Exception as e:
-        logger.error("Error in setup_display:", e)
+        logger.error("Error in setup_display: %s" % e)
 
+## Tear down the image buffer display
 def teardown_display():
     """Destroy the OpenCV window."""
     cv2.destroyAllWindows()
 
+def round_corners(im, rad):
+    """
+    Round the corners of an image.
+    
+    :param im: Original image
+    :param rad: Radius of rounded corners
+    :return: Image with rounded corners
+    """
+    circle = Image.new('L', (rad * 2, rad * 2), 0)
+    draw = ImageDraw.Draw(circle)
+    draw.ellipse((0, 0, rad * 2, rad * 2), fill=255)
+    
+    alpha = Image.new('L', im.size, 255)
+    
+    w,h = im.size
+    
+    # Top-left
+    alpha.paste(circle.crop((0, 0, rad, rad)), (0, 0))
+    # Top-right
+    alpha.paste(circle.crop((rad, 0, rad * 2, rad)), (w - rad, 0))
+    # Bottom-left
+    alpha.paste(circle.crop((0, rad, rad, rad * 2)), (0, h - rad))
+    # Bottom-right
+    alpha.paste(circle.crop((rad, rad, rad * 2, rad * 2)), (w - rad, h - rad))
+    
+    im.putalpha(alpha)
+    return im
+
+## Render the image and text
 def render_worker():
     try:
         global last_image, last_text  # Declare the globals for modification
@@ -268,6 +317,7 @@ def render_worker():
         if not mux_image_queue.empty():
             image = mux_image_queue.get()
 
+            image = round_corners(image, 50)
             # Handle 'STOP' stream type
             if image == 'STOP':
                 return False
@@ -321,14 +371,12 @@ def render_worker():
                 text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_DUPLEX, font_size, font_thickness)[0]
                 x_pos = (image.shape[1] - text_width) // 2  # Center the text
                 if contains_japanese(line):
-                    # Use your method to draw Japanese text
-                    draw_japanese_text_on_image(image, line, (x_pos, y_pos), args.japanesefont, 40)
+                    image = draw_japanese_text_on_image(image, line, (x_pos, y_pos), args.japanesefont,60)
                 else:
                     cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (0, 0, 0), border_thickness)
                     cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (255, 255, 255), font_thickness)
                 y_pos -= 60
 
-            #if ((image != last_image) or (text != last_text)):
             cv2.imshow('GAIB The Groovy AI Bot', image)
 
             k = cv2.waitKey(10)  # Mask to get last 8 bits
@@ -1018,12 +1066,6 @@ class AiTwitchBot(commands.Cog):
             if message.echo:
                 return
 
-            if self.ai_name in message.content.lower():
-                logger.info(f"{message.author.name} asked us {message.content} yet did not use the !personality syntax!")
-                await message.channel.send(f"Hi, @{message.author.name}! Please use !{self.ai_name} to ask a question.")
-            else:
-                logger.info(f"{message.author.name} said {message.content}.");
-
             await self.bot.handle_commands(message)
         except Exception as e:
             logger.error("Error in event_message twitch bot:", e)
@@ -1086,7 +1128,7 @@ class AiTwitchBot(commands.Cog):
             db_conn.close()
 
             # Formulate the question and append it to history
-            formatted_question = f"{name} asked {ainame} the question {question}"
+            formatted_question = f"twitchchat user {name} said {question}"
             history.append(ChatCompletionMessage(role="user", content=formatted_question))
 
             send_to_llm("twitch", name, formatted_question, history, ainame, self.ai_personality)
