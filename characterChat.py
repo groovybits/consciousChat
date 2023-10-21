@@ -244,65 +244,6 @@ class ImageHistory:
         pil_image.save(filepath)
         return "%s/%s" % (filepath, filename)
 
-class ImageFrame(wx.Frame):
-    def __init__(self, title):
-        super().__init__(None, title=title, size=(512, 512))
-        
-        self.panel = wx.Panel(self)
-        self.image_widget = wx.StaticBitmap(self.panel)
-        
-        self.sizer = wx.BoxSizer(wx.VERTICAL)
-        self.sizer.Add(self.image_widget, 1, wx.ALL | wx.EXPAND, 5)
-        self.panel.SetSizer(self.sizer)
-        
-        self.Bind(wx.EVT_CLOSE, self.on_close)
-        self.Show()
-
-    def update_image(self, pil_image):
-        wx_image = wx.Image(pil_image.size[0], pil_image.size[1])
-        wx_image.SetData(pil_image.tobytes())
-        wx_bitmap = wx.Bitmap(wx_image)
-        
-        self.image_widget.SetBitmap(wx_bitmap)
-        self.sizer.Layout()  # Update the layout to adjust to the new image
-
-    def on_close(self, event):
-        # Handle the close event
-        self.Destroy()
-
-    def on_paint(self, event=None):
-        dc = wx.PaintDC(self)
-        # Get the last image from the history
-        if image_history.images:
-            pil_image = image_history.images[-1]["image"]
-            wx_image = self.pil_to_wx(pil_image)
-            
-            # Calculate the center for the image
-            width, height = self.GetSize()
-            img_width, img_height = pil_image.size
-            x = (width - img_width) // 2
-            y = (height - img_height) // 2
-
-            dc.DrawBitmap(wx.Bitmap(wx_image), x, y, True)
-
-    def pil_to_wx(self, pil_image):
-        wx_image = wx.Image(pil_image.size[0], pil_image.size[1])
-        wx_image.SetData(pil_image.tobytes())
-        return wx_image
-
-    def update_display(self):
-        # This will trigger the on_paint event
-        self.Refresh()
-
-class ImageApp(wx.App):
-    def __init__(self, title="GAIB 2.0"):
-        super().__init__()
-        self.frame = ImageFrame(title)
-        self.frame.Show()
-
-    def update_image(self, pil_image):
-        self.frame.update_image(pil_image)
-
 image_history = ImageHistory()
 
 def image_to_ascii(image, width):
