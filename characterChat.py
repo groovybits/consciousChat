@@ -61,6 +61,7 @@ p.nice(-10)  # Set a higher priority; be cautious as it can affect system stabil
 
 load_dotenv()
 
+exit_now = False
 
 ## History of chat
 messages = []
@@ -114,8 +115,6 @@ new_image_data_event = threading.Event()
 #audio_queue_lock = threading.Lock()
 #speak_queue_lock = threading.Lock()
 #image_queue_lock = threading.Lock()
-
-exit_now = False
 
 def simulate_image_generation(num_samples=5):
     for _ in range(num_samples):
@@ -228,9 +227,9 @@ def render_worker():
             cv2.setWindowProperty('Frame Server', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
         elif k == ord('q'):
             cv2.destroyAllWindows()
-            exit_now = True
+            #exit_now = True
             return False
-            #exit()  # You can replace this with a mechanism to close only the window and not the entire application
+            exit()
 
     return True
 
@@ -1198,11 +1197,13 @@ def main(stdscr):
                         if line_length >= 80 and char in [' ', '\n', '.', '?']:
                             print()
                             line_length = 0
+                else:
+                    time.sleep(0.1)
 
             ## Render remaining images and subtitles
             if args.render:
                 while render_worker() != False:
-                    time.sleep(0.1)
+                    time.sleep(0.5)
 
             # At the end of your main loop or program
             teardown_display()
