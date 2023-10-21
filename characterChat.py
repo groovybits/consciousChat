@@ -322,7 +322,7 @@ def render_worker():
                 x_pos = (image.shape[1] - text_width) // 2  # Center the text
                 if contains_japanese(line):
                     # Use your method to draw Japanese text
-                    draw_japanese_text_on_image(image, line, (x_pos, y_pos), args.japanese_font, 40)
+                    draw_japanese_text_on_image(image, line, (x_pos, y_pos), args.japanesefont, 40)
                 else:
                     cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (0, 0, 0), border_thickness)
                     cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (255, 255, 255), font_thickness)
