@@ -220,7 +220,13 @@ def render_worker():
         # Make window resizable
         cv2.namedWindow('Frame Server', cv2.WINDOW_NORMAL)
         cv2.imshow('Frame Server', image)
-        cv2.waitKey(1)
+
+        # Check for 'f' key press to toggle fullscreen
+        k = cv2.waitKey(1) 
+        if k == ord('f'):
+            cv2.setWindowProperty('Frame Server', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+        elif k == ord('g'):  # You can use another key if you like
+            cv2.setWindowProperty('Frame Server', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
 
     return True
 
