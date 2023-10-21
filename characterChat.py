@@ -38,7 +38,6 @@ import threading
 import time
 import signal
 import sys
-from PIL import Image
 from tqdm import tqdm
 import uuid
 import psutil
@@ -50,6 +49,7 @@ import asyncio
 import textwrap
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 """
 import psutil
@@ -132,6 +132,23 @@ def simulate_image_generation(num_samples=5):
 # Global variables to hold the last displayed image and text
 last_image = None
 last_text = ""
+
+## draw_japanese_text_on_image(img, "こんにちは", (50, 250), font_path, 40)
+def draw_japanese_text_on_image(image_np, text, position, font_path, font_size):
+    # Convert to a PIL Image
+    image_pil = Image.fromarray(cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB))
+    
+    # Prepare drawing context
+    draw = ImageDraw.Draw(image_pil)
+    font = ImageFont.truetype(font_path, font_size)
+    
+    # Draw text on image
+    draw.text(position, text, font=font, fill=(255, 255, 255))
+    
+    # Convert back to NumPy array
+    image_np = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
+    
+    return image_np
 
 def draw_default_frame_with_logo(logo_path="pages/logo.png"):
     try:
@@ -282,18 +299,33 @@ def render_worker():
             # Resize for viewing
             image = cv2.resize(image, (args.width, args.height), interpolation=cv2.INTER_LINEAR)
 
-            # Wrap text
+            def contains_japanese(text):
+                for char in text:
+                    if any([start <= ord(char) <= end for start, end in [
+                        (0x3040, 0x309F),  # Hiragana
+                        (0x30A0, 0x30FF),  # Katakana
+                        (0x4E00, 0x9FFF),  # Kanji
+                        (0x3400, 0x4DBF)   # Kanji (extension A)
+                    ]]):
+                        return True
+                return False
+
             wrapped_text = textwrap.wrap(text, width=45)  # Adjusted width
             y_pos = image.shape[0] - 40  # Adjusted height from bottom
+
             font_size = 2
             font_thickness = 4  # Adjusted for bolder font
             border_thickness = 15  # Adjusted for bolder border
 
             for line in reversed(wrapped_text):
-                text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_DUPLEX, font_size, font_thickness)[0]
-                x_pos = (image.shape[1] - text_width) // 2  # Center the text
-                cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (0, 0, 0), border_thickness)
-                cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (255, 255, 255), font_thickness)
+                if contains_japanese(line):
+                    # Use your method to draw Japanese text
+                    draw_japanese_text_on_image(image, line, (x_pos, y_pos), args.japanese_font, 40)
+                else:
+                    text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_DUPLEX, font_size, font_thickness)[0]
+                    x_pos = (image.shape[1] - text_width) // 2  # Center the text
+                    cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (0, 0, 0), border_thickness)
+                    cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (255, 255, 255), font_thickness)
                 y_pos -= 60
 
             #if ((image != last_image) or (text != last_text)):
@@ -1415,6 +1447,8 @@ if __name__ == "__main__":
     facebook_model = "facebook/mms-tts-eng"
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("-jf", "--japanesefont", type=str, default="Noto_Sans_JP/NotoSansJP-VariableFont_wght.ttf",
+                        help="Japanese font file to use with -ro option for speaking Japanese and writing it"),
     parser.add_argument("-l", "--language", type=str, default="",
                         help="Have output use another language than the default English for text and speech. See the -ro option and uroman.pl program needed.")
     parser.add_argument("-pd", "--persistdirectory", type=str, default="vectordb_data",

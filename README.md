@@ -71,7 +71,9 @@ This project is licensed under the Apache License. You can use it to build your 
 - Install the required packages from `requirements.txt` with pip:
 - Uroman Perl program https://github.com/isi-nlp/uroman.git (if wanting multi-lingual speaking in more than English)
     - Set the path to uroman.pl, where you cloned it to: "export UROMAN=`pwd`/uroman/bin".
-    - Use the "-ro True" option to romanize the TTS speaking text.
+    - Use the "-ro" option to romanize the TTS speaking text.
+- Optional Japanese font like [Noto-Sans-JP](https://fonts.google.com/noto/specimen/Noto+Sans+JP?noto.query=jp) using the -jf <font_path> option.
+    - Use -ro -jf <japanese_font> to allow japanese speaking and subtitles to work. 
 
 ```bash
 # Development SDK on Mac OS X
