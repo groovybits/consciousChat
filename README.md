@@ -1,11 +1,13 @@
 ```
-Chatbot that speaks
+Completely local LLM TTS Stable Diffusion Chatbot that speaks with images and subtitles.
 
-Multispeaker LLM locally with TTS all free if run locally
+Multispeaker LLM locally with TTS all free if run locally. GPT-3.5 LLM Twitch bot streamer.
 
 Chris Kennedy (C) The Groovy Organization Apache License
+
+Try it at https://twitch.com/groovyaibot to see in action.
 ```
-# Conscious Chat: Multispeaker LLM with TTS
+# Conscious Chat: Multispeaker LLM with TTS Twitch Stable Diffusion all free local LLM
 
 This chatbot, developed by Chris Kennedy of The Groovy Organization, creates an engaging conversation environment through the use of multispeaker Language Models (LLM) and Text-to-Speech (TTS) technology. The goal of the project is to foster multi-user interactions among multiple AI entities, creating a Game of Life-like phenomenon for human entertainment and question answering.
 
