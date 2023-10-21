@@ -26,13 +26,14 @@ This project is licensed under the Apache License.
 - **Webpage Retrieval**: Ability to look up all URLs in prompt and load up the LLM context with the summary + store them locally for future fast retrieval.
 - **Twitch Bot**: Ability to have twitch users interact with the conversation via Twitch chatrooms and an OBS. Future output will be direct to twitch as video.
 - **User History**: Bot has knowlege of users past questions to build up a context and impression of them.
+- **Stable Diffusion Images**: Images from output speaker lines, 6-10 a minute + capable with tokens driving generation by sentence chunking.
+- **Hard Subtitle**: Subtitles synced with audio speaking voice and image generation.
 
 ## TODO
 
 - Prompt template usage for cleaning up the prompt and making it standard.
 - Document retrieval from PDFs, Json, Text files for Context injection.
 - Female TTS model voices.
-- Better TTS quality? Facebook MMS is okay, nice natural sound, yet sort of rough sounding and 16k sample rate. Can we upscale it???
 - Document retrieval tuning of settings, speed up if possible.
 - Background Music generation.
 - Persistent chat history between sessions.
