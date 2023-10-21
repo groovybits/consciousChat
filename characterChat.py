@@ -50,6 +50,8 @@ from dotenv import load_dotenv
 from twitchio.ext import commands
 import asyncio
 import textwrap
+import cv2
+import numpy as np
 
 """
 import psutil
@@ -59,13 +61,9 @@ p.nice(-10)  # Set a higher priority; be cautious as it can affect system stabil
 
 load_dotenv()
 
-LOGLEVEL = logger.DEBUG
 
 ## History of chat
 messages = []
-
-log_id = uuid.uuid4().hex
-logger.basicConfig(filename=f"logs/gaib-{log_id}.log", level=LOGLEVEL)
 
 # Get the virtual memory status
 vm = psutil.virtual_memory()
@@ -105,6 +103,12 @@ text_queue = queue.Queue()
 output_queue = queue.Queue()
 prompt_queue = queue.Queue()
 twitch_queue = queue.Queue()
+mux_image_queue = queue.Queue()
+mux_text_queue = queue.Queue()
+
+## Render event signal for images and text
+new_text_data_event = threading.Event()
+new_image_data_event = threading.Event()
 
 # Define a lock for thread safety
 #audio_queue_lock = threading.Lock()
@@ -112,6 +116,113 @@ twitch_queue = queue.Queue()
 #image_queue_lock = threading.Lock()
 
 exit_now = False
+
+def simulate_image_generation(num_samples=5):
+    for _ in range(num_samples):
+        # Simulate image data generation
+        image_data = np.zeros((600, 800, 3), dtype=np.uint8)  # Placeholder blank image
+        mux_image_queue.put(image_data)
+        
+        # Simulate text metadata generation (randomly decide to add text)
+        if random.choice([True, False]):
+            text_data = f"Overlay text {time.time()}"
+            mux_text_queue.enqueue(text_data)
+            new_text_data_event.set()
+        
+        # Introduce a delay to simulate real-time data generation
+        time.sleep(random.uniform(0.5, 2))
+
+# Global variables to hold the last displayed image and text
+last_image = None
+last_text = ""
+
+def setup_display():
+    """Initialize the OpenCV window."""
+    cv2.namedWindow('Frame Server', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Frame Server', 800, 600)  # Initial window size
+
+def teardown_display():
+    """Destroy the OpenCV window."""
+    cv2.destroyAllWindows()
+
+def render_worker():
+    global last_image, last_text  # Declare the globals for modification
+
+    # Check if the queue is empty or if we should exit
+    if (mux_text_queue.empty() and mux_image_queue.empty()) or exit_now:
+        return False
+
+    ## Get text
+    text = ""
+    image = None
+
+    if not mux_text_queue.empty():
+        text = mux_text_queue.get()
+
+        # Handle 'STOP' stream type
+        if text == 'STOP':
+            return False
+        if text.strip() == "":
+            text = last_text
+        else:
+            last_text = text
+    else:
+        text = last_text
+
+    if not mux_image_queue.empty():
+        image = mux_image_queue.get()
+
+        # Handle 'STOP' stream type
+        if image == 'STOP':
+            return False
+
+        image_np = np.array(image)
+        image = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+        last_image = image
+    else:
+        if last_image is not None:
+            image = last_image
+        else:
+            image = np.zeros((args.height, args.width, 3), dtype=np.uint8)  # Initialized with a blank slate
+            last_image = image
+
+    if image is not None:
+        # Maintain aspect ratio and add black bars
+        desired_ratio = 16 / 9
+        current_ratio = image.shape[1] / image.shape[0]
+
+        if current_ratio > desired_ratio:
+            new_height = int(image.shape[1] / desired_ratio)
+            padding = (new_height - image.shape[0]) // 2
+            image = cv2.copyMakeBorder(image, padding, padding, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+        else:
+            new_width = int(image.shape[0] * desired_ratio)
+            padding = (new_width - image.shape[1]) // 2
+            image = cv2.copyMakeBorder(image, 0, 0, padding, padding, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+
+        # Resize for viewing
+        image = cv2.resize(image, (args.width, args.height), interpolation=cv2.INTER_LINEAR)
+
+        # Wrap text
+        wrapped_text = textwrap.wrap(text, width=50)  # Adjusted width
+        y_pos = image.shape[0] - 100  # Adjusted height from bottom
+        font_size = 1.5
+        font_thickness = 3  # Adjusted for bolder font
+        border_thickness = 7  # Adjusted for bolder border
+
+        for line in reversed(wrapped_text):
+            text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_size, font_thickness)[0]
+            x_pos = (image.shape[1] - text_width) // 2  # Center the text
+            cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_SIMPLEX, font_size, (0, 0, 0), border_thickness)
+            cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_SIMPLEX, font_size, (255, 255, 255), font_thickness)
+            y_pos -= 60
+
+        # Make window resizable
+        cv2.namedWindow('Frame Server', cv2.WINDOW_NORMAL)
+        cv2.imshow('Frame Server', image)
+        cv2.waitKey(1)
+
+    return True
 
 class ImageHistory:
     def __init__(self):
@@ -233,14 +344,22 @@ def image_worker():
                     ).images[0]
 
             # Store the image in the history and save to disk
-            imgname = image_history.add_image(image, image_prompt)
-            logger.debug("--- Image History: %s" % imgname)
+            if args.saveimages:
+                imgname = image_history.add_image(image, image_prompt)
+                logger.debug("--- Image History: %s" % imgname)
 
-            logger.info("--- Stable Diffusion got an image: %s\n" % imgname[:80])
+                logger.info("--- Stable Diffusion got an image: %s\n" % imgname[:80])
+
+            ## render
+            if args.render:
+                ## Mux Queue the image
+                mux_image_queue.put(image)
+                new_image_data_event.set()
 
             ## ASCII Printout of Image
-            print("\n", end='', flush=True)
-            print(image_to_ascii(image, 50), end='', flush=True)
+            if args.ascii:
+                print("\n", end='', flush=True)
+                print(image_to_ascii(image, 50), end='', flush=True)
 
             # Update the image in the app
             #app.frame.update_display()
@@ -326,6 +445,9 @@ def audio_worker():
         ## Output text to sync if requested
         if not args.nosync and text != "" and text != "STOP":
             output_queue.put(text)
+            if args.render:
+                mux_text_queue.put(text)
+                new_text_data_event.set()
 
         if audio != "":
             audiobuf = io.BytesIO(audio)
@@ -333,15 +455,15 @@ def audio_worker():
                 ## Speak WAV TTS Output
                 wave_obj = wave.open(audiobuf)
                 ## Check if we have initialized the audio
-                if pyaudio_stream == None:
-                    pyaudio_stream = pyaudio_handler.open(format=pyaudio_handler.get_format_from_width(wave_obj.getsampwidth()),
-                                    channels=wave_obj.getnchannels(),
-                                    rate=wave_obj.getframerate(),
-                                    output=True)
+                ##if pyaudio_stream == None:
+                pyaudio_stream = pyaudio_handler.open(format=pyaudio_handler.get_format_from_width(wave_obj.getsampwidth()),
+                                channels=wave_obj.getnchannels(),
+                                rate=wave_obj.getframerate(),
+                                output=True)
 
                 ## Read and Speak
                 while not exit_now:
-                    audiodata = wave_obj.readframes(1024)
+                    audiodata = wave_obj.readframes(args.audiopacketreadsize)
                     if not audiodata:
                         break
                     pyaudio_stream.write(audiodata)
@@ -436,14 +558,14 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
     url_directory = os.path.join(persistdirectory, url_directory)
 
     if args.debug:
-        logger.info("--- gethttp() parsed URL {url}:", parsed_url)
+        logger.info("--- gethttp() parsed URL %s:" % parsed_url)
 
     # Create the directory if it does not exist
     if not os.path.exists(url_directory):
         try:
             os.makedirs(url_directory)
         except:
-            logger.error("--- Error trying to create directory {url_directory}")
+            logger.error("--- Error trying to create directory %s" % url_directory)
             return []
 
     ## Connect to DB to check if this url has already been ingested
@@ -463,12 +585,12 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
             docs = vdb.similarity_search(question)
 
             db_conn.close() ## Close DB
-            logger.info("--- gethttp() Found vector embeddings for {url}, returning them...", docs)
+            logger.info("--- gethttp() Found vector embeddings for %s, returning them... %s" % (url,  docs))
             return docs;
         except Exception as e:
-            logger.error("--- Error: Looking up embeddings for {url}:", e)
+            logger.error("--- Error: Looking up embeddings for {url}: %s" % e)
     else:
-        logger.info(f"--- New URL {url}, ingesting into vector db...")
+        logger.info("--- New URL %s, ingesting into vector db..." % url)
 
     ## Close SQL Light DB Connection
     db_conn.close()
@@ -476,7 +598,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
     try:
         loader = RecursiveUrlLoader(url=url, max_depth=3, extractor=lambda x: Soup(x, "html.parser").text)
     except Exception as e:
-        logger.error("--- Error: with url {url} gethttp Url Loader:", e)
+        logger.error("--- Error: with url %s gethttp Url Loader: %s" % (url,  e))
         return []
 
     docs = []
@@ -490,7 +612,7 @@ def gethttp(url, question, llama_embeddings, persistdirectory):
             vectorstore.persist()
             docs = vectorstore.similarity_search(question)
         except Exception as e:
-            logger.error("\n--- Error with {url} text splitting in gethttp():", e)
+            logger.error("--- Error with %s text splitting in gethttp(): %s" % (url, e))
 
     ## Only save if we found something
     if len(docs) > 0:
@@ -570,7 +692,7 @@ def get_user_input():
         return input("\nQuestion: ")
 
 ## Speak a line
-def encode_line(line):
+def encode_line(line, speaker = "ai"):
     if args.silent:
         return None
     if not line or line == "":
@@ -596,18 +718,22 @@ def encode_line(line):
             if args.debug:
                 logger.debug("--- Romanized Text: %s" % romanized_aitext)
     except Exception as e:
-        logger.error(f"--- Error romanizing input: {aitext}", e)
+        logger.error("--- Error romanizing input: %s" %  e)
 
     ## Tokenize
     aiinputs = aitokenizer(aitext, return_tensors="pt")
     aiinputs['input_ids'] = aiinputs['input_ids'].long()
+
+	## TTS seed to choose random voice behavior
+    if args.aittsseed > 0:
+        set_seed(args.aittsseed)
 
     ## Run TTS Model
     try:
         with torch.no_grad():
             aioutput = aimodel(**aiinputs).waveform
     except Exception as e:
-        logger.error(f"--- Error with TTS AI Speech model! {aitext} ", e)
+        logger.error("--- Error with TTS AI Speech model! %s" % e)
         return None
 
     ## Buffer audio speech output as WAV
@@ -632,7 +758,7 @@ def build_prompt(username, question, ainame, aipersonality):
         for url in urls:
             url = url.strip(",.;:")
             if args.debug:
-                logger.debug("--- Found URL {url} in prompt input.")
+                logger.debug("--- Found URL %s in prompt input." % url)
 
             if llama_embeddings == None:
                 llama_embeddings = LlamaCppEmbeddings(model_path=args.embeddingmodel,
@@ -803,8 +929,9 @@ class AiTwitchBot(commands.Cog):
             db_conn.commit()
 
         # Add the new message to the messages table
-        cursor.execute("INSERT INTO messages (user, content) VALUES (?, ?)", (name, question))
-        db_conn.commit()
+        if question != "...":
+            cursor.execute("INSERT INTO messages (user, content) VALUES (?, ?)", (name, question))
+            db_conn.commit()
 
         # Retrieve the chat history for this user
         cursor.execute("SELECT content FROM messages WHERE user = ? ORDER BY timestamp", (name,))
@@ -948,6 +1075,9 @@ def prompt_worker():
         if question != "...":
             if args.nosync:
                 output_queue.put(question)
+                if args.render:
+                    mux_text_queue.put(question)
+                    new_text_data_event.set()
             speak_queue.put(question)
 
         for item in output:
@@ -1051,37 +1181,44 @@ def main(stdscr):
             else:
                 next_question = args.question
 
-            logger.debug("\n--- Next Question: %s" % next_question)
+            logger.debug("--- Next Question: %s" % next_question)
 
             send_to_llm("main", args.username, next_question, [], current_name, current_personality)
 
             # Generate the Answer
             if not args.autogenerate or not have_ran:
                 if args.episode:
-                    #stdscr.addstr(0, 0, "Generating an Episode... ")
                     print("Generating an Episode...")
                 else:
-                    #stdscr.addstr(0, 0, "Generating an Answer... ")
                     print("Generating an Answer... ")
 
             ## Wait for response
             response = ""
             start_time = time.time()
             line_length = 0
+
+            # At the beginning of your main loop or program
+            setup_display()
+
             while not exit_now:
+                ## render
+                if args.render:
+                    render_worker()
+
                 text = ""
                 if not output_queue.empty():
                     text = output_queue.get()
+                    ## audio / text output
+                    if text == 'STOP':
+                        break
+
+                    response = "%s%s" % (response, text)
                 else:
                     current_time = time.time()
                     if current_time - start_time > 120:
                         break
                     time.sleep(0.1)
                     continue
-
-                ## audio / text output
-                if text == 'STOP':
-                    break
 
                 if text != "":
                     for char in text:
@@ -1091,20 +1228,29 @@ def main(stdscr):
                             print()
                             line_length = 0
 
+            ## Render remaining images and subtitles
+            if args.render:
+                while render_worker() != False:
+                    time.sleep(0.1)
+
+            # At the end of your main loop or program
+            teardown_display()
+
             have_ran = True
             if not args.autogenerate:
                 print("END OF STREAM")
-            logger.debug("Response: %s" % response)
+
+            logger.debug("Output response: %s" % response)
 
             ## Story User Question in History
-            if next_question != ".":
+            if next_question != "..." and next_question != "":
                 messages.append(ChatCompletionMessage(
                         role="user",
                         content="%s" % next_question,
                     ))
 
             ## AI Response History
-            if response != "":
+            if response != "..." and response != "":
                 messages.append(ChatCompletionMessage(
                         role="assistant",
                         content="%s" % response,
@@ -1141,8 +1287,10 @@ if __name__ == "__main__":
     parser.add_argument("-ag", "--autogenerate", action="store_true", default=False, help="Keep autogenerating the conversation without interactive prompting.")
     parser.add_argument("-ss", "--streamspeak", action="store_true", default=False, help="Speak the text as tts token count chunks.")
     parser.add_argument("-tts", "--tokenstospeak", type=check_min, default=50, help="When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.")
-    parser.add_argument("-ttss", "--ttsseed", type=int, default=0,
-                        help="TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow variance per line spoken.")
+    parser.add_argument("-aittss", "--aittsseed", type=int, default=1000,
+                        help="AI Bot TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow variance per line spoken.")
+    parser.add_argument("-usttss", "--usttsseed", type=int, default=100000,
+                        help="User Bot TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow variance per line spoken.")
     parser.add_argument("-mtts", "--mintokenstospeak", type=check_min, default=12, help="Minimum number of tokens to generate before sending to TTS text to speech.")
     parser.add_argument("-q", "--question", type=str, default="", help="Question to ask initially, else you will be prompted.")
     parser.add_argument("-un", "--username", type=str, default=default_human_name, help="Your preferred name to use for your character.")
@@ -1151,12 +1299,12 @@ if __name__ == "__main__":
     parser.add_argument("-ap", "--aipersonality", type=str,
                         default=default_ai_personality, help="AI (Chat Bot) Personality.")
     parser.add_argument("-an", "--ainame", type=str, default=default_ai_name, help="AI Character name to use.")
-    parser.add_argument("-asr", "--aispeakingrate", type=float, default=1.0, help="AI speaking rate of TTS speaking.")
-    parser.add_argument("-ans", "--ainoisescale", type=float, default=0.667, help="AI noisescale for TTS speaking.")
+    parser.add_argument("-asr", "--aispeakingrate", type=float, default=0.9, help="AI speaking rate of TTS speaking.")
+    parser.add_argument("-ans", "--ainoisescale", type=float, default=1.0, help="AI noisescale for TTS speaking.")
     parser.add_argument("-apr", "--aisamplingrate", type=int,
                         default=16000, help="AI sampling rate of TTS speaking, do not change from 16000!")
-    parser.add_argument("-usr", "--userspeakingrate", type=float, default=0.8, help="User speaking rate for TTS.")
-    parser.add_argument("-uns", "--usernoisescale", type=float, default=0.667, help="User noisescale for TTS speaking.")
+    parser.add_argument("-usr", "--userspeakingrate", type=float, default=1.1, help="User speaking rate for TTS.")
+    parser.add_argument("-uns", "--usernoisescale", type=float, default=1.0, help="User noisescale for TTS speaking.")
     parser.add_argument("-upr", "--usersamplingrate", type=int, default=16000,
                         help="User sampling rate of TTS speaking, do not change from 16000!")
     parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
@@ -1182,13 +1330,34 @@ if __name__ == "__main__":
     parser.add_argument("-ews", "--embeddingwindowsize", type=int, default=256, help="Document embedding window size, default 256.")
     parser.add_argument("-ewo", "--embeddingwindowoverlap", type=int, default=25, help="Document embedding window overlap, default 25.")
     parser.add_argument("-eds", "--embeddingdocsize", type=int, default=4096, help="Document embedding window overlap, default 4096.")
-    parser.add_argument("-hctx", "--historycontext", type=int, default=0, help="Document embedding window overlap, default 4096.")
+    parser.add_argument("-hctx", "--historycontext", type=int, default=8192, help="User history context stored and sent to the LLM, default 8192.")
     parser.add_argument("-im", "--imagemodel", type=str, default="runwayml/stable-diffusion-v1-5", help="Stable Diffusion Image Model to use.")
-    parser.add_argument("-ns", "--nosync", action="store_true", default=False, help="Don't sync the text with the speaking, output realtiem.\n")
+    parser.add_argument("-ns", "--nosync", action="store_true", default=False, help="Don't sync the text with the speaking, output realtiem.")
     parser.add_argument("-tw", "--twitch", action="store_true", default=False, help="Twitch mode, output to twitch chat.")
     parser.add_argument("-gu", "--geturls", action="store_true", default=False, help="Get URLs from the prompt and use them to retrieve documents.")
+    parser.add_argument("-si", "--saveimages", action="store_true", default=False, help="Save images to disk.")
+    parser.add_argument("-ll", "--loglevel", type=str, default="info", help="Logging level: debug, info...")
+    parser.add_argument("-ars", "--audiopacketreadsize", type=int, default=32768, help="Size of audio packet read/write")
+    parser.add_argument("-ren", "--render", action="store_true", default=False, help="Render the output to a GUI OpenCV window for playback viewing.")
+    parser.add_argument("-wi", "--width", type=int, default=1920, help="Width of rendered window, only used with -ren")
+    parser.add_argument("-he", "--height", type=int, default=1080, help="Height of rendered window, only used with -ren")
+    parser.add_argument("-as", "--ascii", action="store_true", default=False, help="Render ascii images")
 
     args = parser.parse_args()
+
+    LOGLEVEL = logger.INFO
+
+    if args.loglevel == "info":
+        LOGLEVEL = logger.INFO
+    elif args.loglevel == "debug":
+        LOGLEVEL = logger.DEBUG
+    elif args.loglevel == "warning":
+        LOGLEVEL = logger.WARNING
+    elif args.loglevel == "verbose":
+        LOGLEVEL = logger.VERBOSE
+
+    log_id = uuid.uuid4().hex
+    logger.basicConfig(filename=f"logs/gaib-{log_id}.log", level=LOGLEVEL)
 
     ## Personality for chat
     current_personality = args.aipersonality
@@ -1218,14 +1387,6 @@ if __name__ == "__main__":
     ## we can't have more history than LLM context
     if args.historycontext > args.context:
         args.historycontext = args.context
-
-	## TTS seed to choose random voice behavior
-    if args.ttsseed > 0:
-        set_seed(args.ttsseed)
-
-	## auto generate a conversation
-    if args.autogenerate:
-        args.stoptokens = ""
 
 	## Lots of debuggin
     if args.doubledebug:
@@ -1298,7 +1459,7 @@ if __name__ == "__main__":
 
         main("main")
     except Exception as e:
-        logger.error("\n--- Error with program startup curses wrappper: %s" % e)
+        logger.error("--- Error with program startup curses wrappper: %s" % e)
     finally:
         cleanup()
         speak_thread.join()  # Wait for the speaking thread to finish
@@ -1308,6 +1469,6 @@ if __name__ == "__main__":
         if args.twitch:
             twitch_thread.join()
 
-        logger.info("\n=== GAIB The Groovy AI Bot v2...")
+        logger.info("=== GAIB The Groovy AI Bot v2 exiting...")
         sys.exit(0)
 

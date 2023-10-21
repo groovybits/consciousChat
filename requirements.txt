@@ -17,3 +17,4 @@ diffusers
 wxPython
 python-dotenv
 psutil
+opencv-python
