@@ -110,31 +110,112 @@ You can initiate a chat session by running the `characterChat.py` script from yo
 #### Options
 
 ```plaintext
-  -h, --help                        Show this help message and exit
-  -m, --model MODEL                 Path to the model
-  -ag, --autogenerate               Enables automatic response generation
-  -sonl, --stoponnewline            Stops the conversation on a new line
-  -q, --question QUESTION           Question to ask the AI
-  -un, --username USERNAME          Username
-  -up, --userpersonality USERPERSONALITY     User Personality description
-  -ap, --aipersonality AIPERSONALITY         AI Personality description
-  -an, --ainame AINAME              AI Name
-  -asr, --aispeakingrate AISPEAKINGRATE      AI Speaking rate
-  -ans, --ainoisescale AINOISESCALE         AI Noise scale
-  -apr, --aisamplingrate AISAMPLINGRATE      AI Sampling rate
-  -usr, --userspeakingrate USERSPEAKINGRATE  User Speaking rate
-  -uns, --usernoisescale USERNOISESCALE      User Noise scale
-  -upr, --usersamplingrate USERSAMPLINGRATE  User Sampling rate
-  -tts, --tokenstospeak TOKENSTOSPEAK       Minimum number of tokens to speak
-  -sts, --stoptokens STOPTOKENS     Specific tokens at which to stop speaking
-  -ctx, --context CONTEXT           Context window size for the LLM
-  -mt, --maxtokens MAXTOKENS        Maximum tokens for response
-  -d, --debug                       Enables debug print statements
-  -s, --silent                      Disables speaking the AI's responses
-  -e, --episode                     Enables Episode mode
-  -pc, --promptcompletion           Customizable prompt completion
-  -re, --roleenforcer               Customizable role enforcer statement
-  -l, --language                    Output Text and Speech in another language
+usage: characterChat.py [-h] [-l LANGUAGE] [-pd PERSISTDIRECTORY] [-m MODEL] [-em EMBEDDINGMODEL] [-ag] [-ss] [-tts TOKENSTOSPEAK]
+                        [-aittss AITTSSEED] [-usttss USTTSSEED] [-mtts MINTOKENSTOSPEAK] [-q QUESTION] [-un USERNAME]
+                        [-up USERPERSONALITY] [-ap AIPERSONALITY] [-an AINAME] [-asr AISPEAKINGRATE] [-ans AINOISESCALE]
+                        [-apr AISAMPLINGRATE] [-usr USERSPEAKINGRATE] [-uns USERNOISESCALE] [-upr USERSAMPLINGRATE] [-sts STOPTOKENS]
+                        [-ctx CONTEXT] [-mt MAXTOKENS] [-gl GPULAYERS] [-t TEMPERATURE] [-d] [-dd] [-s] [-ro] [-e]
+                        [-pc PROMPTCOMPLETION] [-re ROLEENFORCER] [-sd] [-udb URLSDB] [-cdb CHATDB] [-ectx EMBEDDINGSCONTEXT]
+                        [-ews EMBEDDINGWINDOWSIZE] [-ewo EMBEDDINGWINDOWOVERLAP] [-eds EMBEDDINGDOCSIZE] [-hctx HISTORYCONTEXT]
+                        [-im IMAGEMODEL] [-ns] [-tw] [-gu] [-si] [-ll LOGLEVEL] [-ars AUDIOPACKETREADSIZE] [-ren] [-wi WIDTH]
+                        [-he HEIGHT] [-as]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -l LANGUAGE, --language LANGUAGE
+                        Have output use another language than the default English for text and speech. See the -ro option and uroman.pl
+                        program needed.
+  -pd PERSISTDIRECTORY, --persistdirectory PERSISTDIRECTORY
+                        Persist directory for Chroma Vector DB used for web page lookups and document analysis.
+  -m MODEL, --model MODEL
+                        File path to model to load and use. Default is models/zephyr-7b-alpha.Q8_0.gguf
+  -em EMBEDDINGMODEL, --embeddingmodel EMBEDDINGMODEL
+                        File path to embedding model to load and use. Use a small simple one to keep it fast. Default is
+                        models/q4-openllama-platypus-3b.gguf
+  -ag, --autogenerate   Keep autogenerating the conversation without interactive prompting.
+  -ss, --streamspeak    Speak the text as tts token count chunks.
+  -tts TOKENSTOSPEAK, --tokenstospeak TOKENSTOSPEAK
+                        When in streamspeak mode, the number of tokens to generate before sending to TTS text to speech.
+  -aittss AITTSSEED, --aittsseed AITTSSEED
+                        AI Bot TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow
+                        variance per line spoken.
+  -usttss USTTSSEED, --usttsseed USTTSSEED
+                        User Bot TTS 'Seed' to fix the voice models speaking sound instead of varying on input. Set to 0 to allow
+                        variance per line spoken.
+  -mtts MINTOKENSTOSPEAK, --mintokenstospeak MINTOKENSTOSPEAK
+                        Minimum number of tokens to generate before sending to TTS text to speech.
+  -q QUESTION, --question QUESTION
+                        Question to ask initially, else you will be prompted.
+  -un USERNAME, --username USERNAME
+                        Your preferred name to use for your character.
+  -up USERPERSONALITY, --userpersonality USERPERSONALITY
+                        Users (Your) personality.
+  -ap AIPERSONALITY, --aipersonality AIPERSONALITY
+                        AI (Chat Bot) Personality.
+  -an AINAME, --ainame AINAME
+                        AI Character name to use.
+  -asr AISPEAKINGRATE, --aispeakingrate AISPEAKINGRATE
+                        AI speaking rate of TTS speaking.
+  -ans AINOISESCALE, --ainoisescale AINOISESCALE
+                        AI noisescale for TTS speaking.
+  -apr AISAMPLINGRATE, --aisamplingrate AISAMPLINGRATE
+                        AI sampling rate of TTS speaking, do not change from 16000!
+  -usr USERSPEAKINGRATE, --userspeakingrate USERSPEAKINGRATE
+                        User speaking rate for TTS.
+  -uns USERNOISESCALE, --usernoisescale USERNOISESCALE
+                        User noisescale for TTS speaking.
+  -upr USERSAMPLINGRATE, --usersamplingrate USERSAMPLINGRATE
+                        User sampling rate of TTS speaking, do not change from 16000!
+  -sts STOPTOKENS, --stoptokens STOPTOKENS
+                        Stop tokens to use, do not change unless you know what you are doing!
+  -ctx CONTEXT, --context CONTEXT
+                        Model context, default 32768.
+  -mt MAXTOKENS, --maxtokens MAXTOKENS
+                        Model max tokens to generate, default unlimited or 0.
+  -gl GPULAYERS, --gpulayers GPULAYERS
+                        GPU Layers to offload model to.
+  -t TEMPERATURE, --temperature TEMPERATURE
+                        Temperature to set LLM Model.
+  -d, --debug           Debug in a verbose manner.
+  -dd, --doubledebug    Extra debugging output, very verbose.
+  -s, --silent          Silent mode, No TTS Speaking.
+  -ro, --romanize       Romanize LLM output text before input into TTS engine.
+  -e, --episode         Episode mode, Output an TV Episode format script.
+  -pc PROMPTCOMPLETION, --promptcompletion PROMPTCOMPLETION
+                        Prompt completion like... Question: {user_question} Answer:
+  -re ROLEENFORCER, --roleenforcer ROLEENFORCER
+                        Role enforcer statement with {user} and {assistant} template names replaced by the actual ones in use.
+  -sd, --summarizedocs  Summarize the documents retrieved with a summarization model, takes a lot of resources.
+  -udb URLSDB, --urlsdb URLSDB
+                        SQL Light retrieval URLs DB file location.
+  -cdb CHATDB, --chatdb CHATDB
+                        SQL Light DB Twitch Chat file location.
+  -ectx EMBEDDINGSCONTEXT, --embeddingscontext EMBEDDINGSCONTEXT
+                        Embedding Model context, default 512.
+  -ews EMBEDDINGWINDOWSIZE, --embeddingwindowsize EMBEDDINGWINDOWSIZE
+                        Document embedding window size, default 256.
+  -ewo EMBEDDINGWINDOWOVERLAP, --embeddingwindowoverlap EMBEDDINGWINDOWOVERLAP
+                        Document embedding window overlap, default 25.
+  -eds EMBEDDINGDOCSIZE, --embeddingdocsize EMBEDDINGDOCSIZE
+                        Document embedding window overlap, default 4096.
+  -hctx HISTORYCONTEXT, --historycontext HISTORYCONTEXT
+                        User history context stored and sent to the LLM, default 8192.
+  -im IMAGEMODEL, --imagemodel IMAGEMODEL
+                        Stable Diffusion Image Model to use.
+  -ns, --nosync         Don't sync the text with the speaking, output realtiem.
+  -tw, --twitch         Twitch mode, output to twitch chat.
+  -gu, --geturls        Get URLs from the prompt and use them to retrieve documents.
+  -si, --saveimages     Save images to disk.
+  -ll LOGLEVEL, --loglevel LOGLEVEL
+                        Logging level: debug, info...
+  -ars AUDIOPACKETREADSIZE, --audiopacketreadsize AUDIOPACKETREADSIZE
+                        Size of audio packet read/write
+  -ren, --render        Render the output to a GUI OpenCV window for playback viewing.
+  -wi WIDTH, --width WIDTH
+                        Width of rendered window, only used with -ren
+  -he HEIGHT, --height HEIGHT
+                        Height of rendered window, only used with -ren
+  -as, --ascii          Render ascii images
 ```
 
 ## Contributing
