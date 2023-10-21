@@ -135,106 +135,187 @@ def simulate_image_generation(num_samples=5):
 last_image = None
 last_text = ""
 
+def draw_default_frame_with_logo(logo_path="pages/logo.png"):
+    try:
+        # Create a black image
+        default_img = np.zeros((args.height, args.width, 3), dtype=np.uint8)
+
+        # Text settings
+        text = "The Groovy AI Bot"
+        font_scale = 2
+        font_thickness = 4
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        color = (255, 255, 255)  # White color
+
+        # Calculate text size to center the text
+        (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, font_thickness)
+        x_centered = (default_img.shape[1] - text_width) // 2
+        y_centered = (default_img.shape[0] + text_height) // 2
+
+        # Draw the text onto the image
+        cv2.putText(default_img, text, (x_centered, y_centered), font, font_scale, color, font_thickness, lineType=cv2.LINE_AA)
+
+        # Overlay the logo above the text
+        logo_img = cv2.imread(logo_path, cv2.IMREAD_UNCHANGED)
+        x_offset = (default_img.shape[1] - logo_img.shape[1]) // 2
+        y_offset = y_centered - text_height - logo_img.shape[0] - 20  # 20 pixels gap between logo and text
+        
+        # Taking care of PNG transparency channel
+        if logo_img.shape[2] == 4:
+            alpha_channel = logo_img[:, :, 3] / 255.0
+            inverse_alpha = 1.0 - alpha_channel
+
+            for c in range(0, 3):
+                default_img[y_offset:y_offset+logo_img.shape[0], x_offset:x_offset+logo_img.shape[1], c] = \
+                    alpha_channel * logo_img[:, :, c] + \
+                    inverse_alpha * default_img[y_offset:y_offset+logo_img.shape[0], x_offset:x_offset+logo_img.shape[1], c]
+        else:
+            default_img[y_offset:y_offset+logo_img.shape[0], x_offset:x_offset+logo_img.shape[1]] = logo_img
+
+        return default_img
+    except Exception as e:
+        logger.error("Error in draw_default_frame_with_logo exeption:", e)
+
+    return None
+
+def draw_default_frame():
+    try:
+        # Create a black image
+        default_img = np.zeros((args.width, args.width, 3), dtype=np.uint8)
+
+        # Text settings
+        text = "The Groovy AI Bot"
+        font_scale = 2
+        font_thickness = 4
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        color = (255, 255, 255)  # White color
+
+        # Calculate text size to center the text
+        (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, font_thickness)
+        x_centered = (default_img.shape[1] - text_width) // 2
+        y_centered = (default_img.shape[0] + text_height) // 2
+
+        # Draw the text onto the image
+        cv2.putText(default_img, text, (x_centered, y_centered), font, font_scale, color, font_thickness, lineType=cv2.LINE_AA)
+
+        return default_img
+    except Exception as e:
+        logger.error("Error in draw_default_frame exeption:", e)
+
+    return None
+
 def setup_display():
     """Initialize the OpenCV window."""
-    if args.fullscreen:
-        cv2.namedWindow('GAIB The Groovy AI Bot', cv2.WINDOW_FULLSCREEN)
-        #cv2.resizeWindow('GAIB The Groovy AI Bot', 800, 600)  # Initial window size
-        #cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-    else:
+    try:
         cv2.namedWindow('GAIB The Groovy AI Bot', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('GAIB The Groovy AI Bot', 1920, 1080)  # Initial window size
+        cv2.resizeWindow('GAIB The Groovy AI Bot', args.width, args.height)  # Set initial window size
+
+        # Display a default black image to avoid gray screen
+        default_img = draw_default_frame_with_logo() #draw_default_frame() #np.zeros((args.width, args.height, 3), dtype=np.uint8)
+        cv2.imshow('GAIB The Groovy AI Bot', default_img)
+
+        cv2.waitKey(1)  # Allow some time for GUI events
+
+        if args.fullscreen:
+            cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    except Exception as e:
+        logger.error("Error in setup_display:", e)
 
 def teardown_display():
     """Destroy the OpenCV window."""
     cv2.destroyAllWindows()
 
 def render_worker():
-    global last_image, last_text  # Declare the globals for modification
+    try:
+        global last_image, last_text  # Declare the globals for modification
 
-    # Check if the queue is empty or if we should exit
-    if (mux_text_queue.empty() and mux_image_queue.empty()) or exit_now:
-        return False
-
-    ## Get text
-    text = ""
-    image = None
-
-    if not mux_text_queue.empty():
-        text = mux_text_queue.get()
-
-        # Handle 'STOP' stream type
-        if text == 'STOP':
+        # Check if the queue is empty or if we should exit
+        if (mux_text_queue.empty() and mux_image_queue.empty()) or exit_now:
             return False
-        if text.strip() == "":
+
+        ## Get text
+        text = ""
+        image = None
+
+        if not mux_text_queue.empty():
+            text = mux_text_queue.get()
+
+            # Handle 'STOP' stream type
+            if text == 'STOP':
+                return False
+            if text.strip() == "":
+                text = last_text
+            else:
+                last_text = text
+        else:
             text = last_text
-        else:
-            last_text = text
-    else:
-        text = last_text
 
-    if not mux_image_queue.empty():
-        image = mux_image_queue.get()
+        if not mux_image_queue.empty():
+            image = mux_image_queue.get()
 
-        # Handle 'STOP' stream type
-        if image == 'STOP':
-            return False
+            # Handle 'STOP' stream type
+            if image == 'STOP':
+                return False
 
-        image_np = np.array(image)
-        image = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-        last_image = image
-    else:
-        if last_image is not None:
-            image = last_image
-        else:
-            image = np.zeros((args.height, args.width, 3), dtype=np.uint8)  # Initialized with a blank slate
+            image_np = np.array(image)
+            image = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
             last_image = image
-
-    if image is not None:
-        # Maintain aspect ratio and add black bars
-        desired_ratio = 16 / 9
-        current_ratio = image.shape[1] / image.shape[0]
-
-        if current_ratio > desired_ratio:
-            new_height = int(image.shape[1] / desired_ratio)
-            padding = (new_height - image.shape[0]) // 2
-            image = cv2.copyMakeBorder(image, padding, padding, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
         else:
-            new_width = int(image.shape[0] * desired_ratio)
-            padding = (new_width - image.shape[1]) // 2
-            image = cv2.copyMakeBorder(image, 0, 0, padding, padding, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+            if last_image is not None:
+                image = last_image
+            else:
+                image = draw_default_frame_with_logo() #np.zeros((args.width, args.height, 3), dtype=np.uint8)  # Initialized with a blank slate
+                last_image = image
 
-        # Resize for viewing
-        image = cv2.resize(image, (args.width, args.height), interpolation=cv2.INTER_LINEAR)
+        if image is not None:
+            # Maintain aspect ratio and add black bars
+            desired_ratio = 16 / 9
+            current_ratio = image.shape[1] / image.shape[0]
 
-        # Wrap text
-        wrapped_text = textwrap.wrap(text, width=45)  # Adjusted width
-        y_pos = image.shape[0] - 40  # Adjusted height from bottom
-        font_size = 2
-        font_thickness = 4  # Adjusted for bolder font
-        border_thickness = 15  # Adjusted for bolder border
+            if current_ratio > desired_ratio:
+                new_height = int(image.shape[1] / desired_ratio)
+                padding = (new_height - image.shape[0]) // 2
+                image = cv2.copyMakeBorder(image, padding, padding, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+            else:
+                new_width = int(image.shape[0] * desired_ratio)
+                padding = (new_width - image.shape[1]) // 2
+                image = cv2.copyMakeBorder(image, 0, 0, padding, padding, cv2.BORDER_CONSTANT, value=[0, 0, 0])
 
-        for line in reversed(wrapped_text):
-            text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, font_size, font_thickness)[0]
-            x_pos = (image.shape[1] - text_width) // 2  # Center the text
-            cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_SIMPLEX, font_size, (0, 0, 0), border_thickness)
-            cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_SIMPLEX, font_size, (255, 255, 255), font_thickness)
-            y_pos -= 60
+            # Resize for viewing
+            image = cv2.resize(image, (args.width, args.height), interpolation=cv2.INTER_LINEAR)
 
-        # Make window resizable
-        cv2.namedWindow('GAIB The Groovy AI Bot', cv2.WINDOW_NORMAL)
-        #if ((image != last_image) or (text != last_text)):
-        cv2.imshow('GAIB The Groovy AI Bot', image)
-        k = cv2.waitKey(1) #& 0xFF  # Mask to get last 8 bits
-        if k == ord('f'):
-            cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        elif k == ord('m'):
-            cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-        elif k == ord('q'):
-            cv2.destroyAllWindows()
-            return False
+            # Wrap text
+            wrapped_text = textwrap.wrap(text, width=45)  # Adjusted width
+            y_pos = image.shape[0] - 40  # Adjusted height from bottom
+            font_size = 2
+            font_thickness = 4  # Adjusted for bolder font
+            border_thickness = 15  # Adjusted for bolder border
 
-    return True
+            for line in reversed(wrapped_text):
+                text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_DUPLEX, font_size, font_thickness)[0]
+                x_pos = (image.shape[1] - text_width) // 2  # Center the text
+                cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (0, 0, 0), border_thickness)
+                cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (255, 255, 255), font_thickness)
+                y_pos -= 60
+
+            #if ((image != last_image) or (text != last_text)):
+            cv2.imshow('GAIB The Groovy AI Bot', image)
+
+            k = cv2.waitKey(1) #& 0xFF  # Mask to get last 8 bits
+            if k == ord('f'):
+                cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                args.fullscreen = True
+            elif k == ord('m'):
+                cv2.setWindowProperty('GAIB The Groovy AI Bot', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                args.fullscreen = False
+            elif k == ord('q'):
+                args.fullscreen = False
+                cv2.destroyAllWindows()
+                return False
+
+        return True
+    except Exception as e:
+        logger.error("Error in rendering worker:", e)
 
 class ImageHistory:
     def __init__(self):
@@ -270,74 +351,77 @@ def image_to_ascii(image, width):
 
 def image_worker():
     while not exit_now:
-        llm_text = ""
-        if not image_queue.empty():
-            llm_text = image_queue.get()
-            if llm_text.strip() == "":
+        try:
+            llm_text = ""
+            if not image_queue.empty():
+                llm_text = image_queue.get()
+                if llm_text.strip() == "":
+                    time.sleep(.01)
+                    continue
+            else:
                 time.sleep(.01)
                 continue
-        else:
-            time.sleep(.01)
-            continue
 
-        if exit_now or llm_text == 'STOP':
-            break
+            if exit_now or llm_text == 'STOP':
+                break
 
-        image_prompt_data = None
-        image_prompt = ""
-        try:
-            image_prompt_data = llm_image(
-                "%s\n\nDescription: %s\nImage:" % (args.systemimageprompt, llm_text),
-                max_tokens=200,
-                temperature=0.2,
-                stream=False,
-                stop=["Image:","\n"]
-            )
-
-            ## Confirm we have an image prompt
+            image_prompt_data = None
             image_prompt = ""
-            if 'choices' in image_prompt_data:
-                if len(image_prompt_data["choices"]) > 0:
-                    if 'text' in image_prompt_data["choices"][0]:
-                        image_prompt = image_prompt_data["choices"][0]['text']
+            try:
+                image_prompt_data = llm_image(
+                    "%s\n\nDescription: %s\nImage:" % (args.systemimageprompt, llm_text),
+                    max_tokens=200,
+                    temperature=0.2,
+                    stream=False,
+                    stop=["Image:","\n"]
+                )
 
-            if image_prompt.strip() == "":
-                logger.error("image prompt generation failed, using original prompt: ", json.dumps(image_prompt_data))
+                ## Confirm we have an image prompt
+                image_prompt = ""
+                if 'choices' in image_prompt_data:
+                    if len(image_prompt_data["choices"]) > 0:
+                        if 'text' in image_prompt_data["choices"][0]:
+                            image_prompt = image_prompt_data["choices"][0]['text']
+
+                if image_prompt.strip() == "":
+                    logger.error("image prompt generation failed, using original prompt: ", json.dumps(image_prompt_data))
+                    image_prompt = llm_text
+            except Exception as e:
+                logger.error("image prompt generation llm didn't get any result:", json.dumps(e))
                 image_prompt = llm_text
+
+            # First-time "warmup" pass if PyTorch version is 1.13 (see explanation above)
+            version = [int(v) for v in torch.__version__.split(".")]
+
+            # Check if version is less than 1.13
+            if version[0] == 1 and version[1] < 13:
+                _ = pipe(image_prompt, num_inference_steps=1)
+
+            image = pipe(image_prompt,
+                         height=512,
+                         width=512,
+                         num_inference_steps=50,
+                         guidance_scale=7.5,
+                         num_images_per_prompt=1
+                    ).images[0]
+
+            # Store the image in the history and save to disk
+            if args.saveimages:
+                imgname = image_history.add_image(image, image_prompt)
+                logger.info("--- Stable Diffusion got an image: %s\n" % imgname)
+
+            ## render
+            if args.render:
+                ## Mux Queue the image
+                mux_image_queue.put(image)
+                new_image_data_event.set()
+
+            ## ASCII Printout of Image
+            if args.ascii:
+                print("\n", end='', flush=True)
+                print(image_to_ascii(image, 50), end='', flush=True)
         except Exception as e:
-            logger.error("image prompt generation llm didn't get any result:", json.dumps(e))
-            image_prompt = llm_text
-
-        # First-time "warmup" pass if PyTorch version is 1.13 (see explanation above)
-        version = [int(v) for v in torch.__version__.split(".")]
-
-        # Check if version is less than 1.13
-        if version[0] == 1 and version[1] < 13:
-            _ = pipe(image_prompt, num_inference_steps=1)
-
-        image = pipe(image_prompt,
-                     height=512,
-                     width=512,
-                     num_inference_steps=50,
-                     guidance_scale=7.5,
-                     num_images_per_prompt=1
-                ).images[0]
-
-        # Store the image in the history and save to disk
-        if args.saveimages:
-            imgname = image_history.add_image(image, image_prompt)
-            logger.info("--- Stable Diffusion got an image: %s\n" % imgname)
-
-        ## render
-        if args.render:
-            ## Mux Queue the image
-            mux_image_queue.put(image)
-            new_image_data_event.set()
-
-        ## ASCII Printout of Image
-        if args.ascii:
-            print("\n", end='', flush=True)
-            print(image_to_ascii(image, 50), end='', flush=True)
+            logger.error("Error exception in image worker:", e)
 
 def speak_worker():
     encoding_buffer_text = ""
@@ -345,43 +429,46 @@ def speak_worker():
     buffer_sent = False  # flag to track if the buffer has been sent to the player
 
     while not exit_now:
-        line = ""
-        if not speak_queue.empty():
-            line = speak_queue.get()
-        else:
-            time.sleep(0.1)
-            continue
+        try:
+            line = ""
+            if not speak_queue.empty():
+                line = speak_queue.get()
+            else:
+                time.sleep(0.1)
+                continue
 
-        if line == "":
-            continue
+            if line == "":
+                continue
 
-        buf = encode_line(line)
-        if buf is not None:
-            buffer_list.append(buf.getvalue())
-            encoding_buffer_text = encoding_buffer_text + line
+            buf = encode_line(line)
+            if buf is not None:
+                buffer_list.append(buf.getvalue())
+                encoding_buffer_text = encoding_buffer_text + line
 
-        if len(encoding_buffer_text) > 0:
-            combined_buffer = b"".join(buffer_list)  # join byte strings
-            text_queue.put(encoding_buffer_text)  # push to the text queue
-            audio_queue.put(combined_buffer)  # push to the audio queue
-            buffer_list.clear()
-            encoding_buffer_text = ""
-            buffer_sent = True
-
-        # If we get a 'STOP' command, send the remaining buffer to audio_queue, and then send 'STOP'
-        if line == 'STOP':
-            if buffer_list and not buffer_sent:  # check if the buffer hasn't been sent yet
-                combined_buffer = b"".join(buffer_list)
+            if len(encoding_buffer_text) > 0:
+                combined_buffer = b"".join(buffer_list)  # join byte strings
                 text_queue.put(encoding_buffer_text)  # push to the text queue
                 audio_queue.put(combined_buffer)  # push to the audio queue
                 buffer_list.clear()
                 encoding_buffer_text = ""
-            audio_queue.put('STOP')
-            text_queue.put('STOP')
-            image_queue.put('STOP')
-            break
+                buffer_sent = True
 
-        buffer_sent = False  # reset the flag for the next iteration
+            # If we get a 'STOP' command, send the remaining buffer to audio_queue, and then send 'STOP'
+            if line == 'STOP':
+                if buffer_list and not buffer_sent:  # check if the buffer hasn't been sent yet
+                    combined_buffer = b"".join(buffer_list)
+                    text_queue.put(encoding_buffer_text)  # push to the text queue
+                    audio_queue.put(combined_buffer)  # push to the audio queue
+                    buffer_list.clear()
+                    encoding_buffer_text = ""
+                audio_queue.put('STOP')
+                text_queue.put('STOP')
+                image_queue.put('STOP')
+                break
+
+            buffer_sent = False  # reset the flag for the next iteration
+        except Exeception as e:
+            logger.error("Error exception in speak worker:", e)
 
 def audio_worker():
     ## PyAudio stream and handler
@@ -392,54 +479,57 @@ def audio_worker():
     audio_stopped = False
     text_stopped = False
     while not exit_now:
-        text = ""
-        audio = ""
-        if not text_queue.empty():
-            text = text_queue.get()
+        try:
+            text = ""
+            audio = ""
+            if not text_queue.empty():
+                text = text_queue.get()
 
-        if not audio_queue.empty():
-            audio = audio_queue.get()
+            if not audio_queue.empty():
+                audio = audio_queue.get()
 
-        if text == "" and audio == "":
-            time.sleep(0.1)
-            continue
+            if text == "" and audio == "":
+                time.sleep(0.1)
+                continue
 
-        if audio == 'STOP':
-            audio_stopped = True
-        if text == 'STOP':
-            text_stopped = True
-        if (text_stopped and audio_stopped):
-            output_queue.put('STOP')
-            image_queue.put('STOP')
-            break
+            if audio == 'STOP':
+                audio_stopped = True
+            if text == 'STOP':
+                text_stopped = True
+            if (text_stopped and audio_stopped):
+                output_queue.put('STOP')
+                image_queue.put('STOP')
+                break
 
-        ## Image Queue for text
-        image_queue.put(text)
-        ## Output text to sync if requested
-        if not args.nosync and text != "" and text != "STOP":
-            output_queue.put(text)
-            if args.render:
-                mux_text_queue.put(text)
-                new_text_data_event.set()
+            ## Image Queue for text
+            image_queue.put(text)
+            ## Output text to sync if requested
+            if not args.nosync and text != "" and text != "STOP":
+                output_queue.put(text)
+                if args.render:
+                    mux_text_queue.put(text)
+                    new_text_data_event.set()
 
-        if audio != "":
-            audiobuf = io.BytesIO(audio)
-            if audiobuf:
-                ## Speak WAV TTS Output
-                wave_obj = wave.open(audiobuf)
-                ## Check if we have initialized the audio
-                ##if pyaudio_stream == None:
-                pyaudio_stream = pyaudio_handler.open(format=pyaudio_handler.get_format_from_width(wave_obj.getsampwidth()),
-                                channels=wave_obj.getnchannels(),
-                                rate=wave_obj.getframerate(),
-                                output=True)
+            if audio != "":
+                audiobuf = io.BytesIO(audio)
+                if audiobuf:
+                    ## Speak WAV TTS Output
+                    wave_obj = wave.open(audiobuf)
+                    ## Check if we have initialized the audio
+                    ##if pyaudio_stream == None:
+                    pyaudio_stream = pyaudio_handler.open(format=pyaudio_handler.get_format_from_width(wave_obj.getsampwidth()),
+                                    channels=wave_obj.getnchannels(),
+                                    rate=wave_obj.getframerate(),
+                                    output=True)
 
-                ## Read and Speak
-                while not exit_now:
-                    audiodata = wave_obj.readframes(args.audiopacketreadsize)
-                    if not audiodata:
-                        break
-                    pyaudio_stream.write(audiodata)
+                    ## Read and Speak
+                    while not exit_now:
+                        audiodata = wave_obj.readframes(args.audiopacketreadsize)
+                        if not audiodata:
+                            break
+                        pyaudio_stream.write(audiodata)
+        except Exception as e:
+            logger.error("Error exception in audio worker:", e)
 
     ## Stop and cleanup speaking TODO keep this open
     if pyaudio_stream:
@@ -834,281 +924,305 @@ class AiTwitchBot(commands.Cog):
 
     ## Channel entrance for our bot
     async def event_ready(self):
-        'Called once when the bot goes online.'
-        logger.info(f"{os.environ['BOT_NICK']} is online!")
-        ws = self.bot._ws  # this is only needed to send messages within event_ready
-        await ws.send_privmsg(os.environ['CHANNEL'], f"/groovyaibot has landed!")
+        try:
+            'Called once when the bot goes online.'
+            logger.info(f"{os.environ['BOT_NICK']} is online!")
+            ws = self.bot._ws  # this is only needed to send messages within event_ready
+            await ws.send_privmsg(os.environ['CHANNEL'], f"/me has landed!")
+        except Exception as e:
+            logger.error("Error in event_ready twitch bot:", e)
 
     ## Message sent in chat
     async def event_message(self, message):
         'Runs every time a message is sent in chat.'
-        logger.debug(f"--- {message.author.name} asked {self.ai_name} the question: {message.content}")
-        if message.author.name.lower() == os.environ['BOT_NICK'].lower():
-            return
+        try:
+            logger.debug(f"--- {message.author.name} asked {self.ai_name} the question: {message.content}")
+            if message.author.name.lower() == os.environ['BOT_NICK'].lower():
+                return
 
-        if message.echo:
-            return
+            if message.echo:
+                return
 
-        if self.ai_name in message.content.lower():
-            logger.info(f"{message.author.name} asked us {message.content} yet did not use the !personality syntax!")
-            await message.channel.send(f"Hi, @{message.author.name}! Please use !{self.ai_name} to ask a question.")
-        else:
-            logger.info(f"{message.author.name} said {message.content}.");
+            if self.ai_name in message.content.lower():
+                logger.info(f"{message.author.name} asked us {message.content} yet did not use the !personality syntax!")
+                await message.channel.send(f"Hi, @{message.author.name}! Please use !{self.ai_name} to ask a question.")
+            else:
+                logger.info(f"{message.author.name} said {message.content}.");
 
-        await self.bot.handle_commands(message)
+            await self.bot.handle_commands(message)
+        except Exception as e:
+            logger.error("Error in event_message twitch bot:", e)
 
     @commands.command(name="message")
     async def chat_request(self, ctx: commands.Context):
-        question = ctx.message.content.replace(f"!message ", '')
-        name = ctx.message.author.name
-        default_ainame = self.ai_name
+        try:
+            question = ctx.message.content.replace(f"!message ", '')
+            name = ctx.message.author.name
+            default_ainame = self.ai_name
 
-        # Remove unwanted characters
-        translation_table = str.maketrans('', '', ':,')
-        cleaned_question = question.translate(translation_table)
+            # Remove unwanted characters
+            translation_table = str.maketrans('', '', ':,')
+            cleaned_question = question.translate(translation_table)
 
-        # Split the cleaned question into words and get the first word
-        ainame = cleaned_question.split()[0] if cleaned_question else None
+            # Split the cleaned question into words and get the first word
+            ainame = cleaned_question.split()[0] if cleaned_question else None
 
-        # Check our list of personalities
-        if ainame not in personalities:
-            logger.debug(f"--- {name} asked for {default_ainame} but it doesn't exist, using default.")
-            ainame = default_ainame
+            # Check our list of personalities
+            if ainame not in personalities:
+                logger.debug(f"--- {name} asked for {default_ainame} but it doesn't exist, using default.")
+                ainame = default_ainame
 
-        logger.debug(f"--- {name} asked {ainame} the question: {question}")
+            logger.debug(f"--- {name} asked {ainame} the question: {question}")
 
-        await ctx.send(f"Thank you for the question {name}")
+            await ctx.send(f"Thank you for the question {name}")
 
-        # Connect to the database
-        db_conn = sqlite3.connect(args.chatdb)
-        cursor = db_conn.cursor()
+            # Connect to the database
+            db_conn = sqlite3.connect(args.chatdb)
+            cursor = db_conn.cursor()
 
-        # Ensure the necessary tables exist
-        cursor.execute('''CREATE TABLE IF NOT EXISTS users (name TEXT PRIMARY KEY NOT NULL);''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS messages (
-                          id INTEGER PRIMARY KEY AUTOINCREMENT,
-                          user TEXT NOT NULL,
-                          content TEXT NOT NULL,
-                          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                          FOREIGN KEY (user) REFERENCES users(name)
-                          );''')
+            # Ensure the necessary tables exist
+            cursor.execute('''CREATE TABLE IF NOT EXISTS users (name TEXT PRIMARY KEY NOT NULL);''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS messages (
+                              id INTEGER PRIMARY KEY AUTOINCREMENT,
+                              user TEXT NOT NULL,
+                              content TEXT NOT NULL,
+                              timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                              FOREIGN KEY (user) REFERENCES users(name)
+                              );''')
 
-        # Check if the user exists, if not, add them
-        cursor.execute("SELECT name FROM users WHERE name = ?", (name,))
-        dbdata = cursor.fetchone()
-        if dbdata is None:
-            logger.info(f"Setting up DB for user {name}.")
-            cursor.execute("INSERT INTO users (name) VALUES (?)", (name,))
-            db_conn.commit()
+            # Check if the user exists, if not, add them
+            cursor.execute("SELECT name FROM users WHERE name = ?", (name,))
+            dbdata = cursor.fetchone()
+            if dbdata is None:
+                logger.info(f"Setting up DB for user {name}.")
+                cursor.execute("INSERT INTO users (name) VALUES (?)", (name,))
+                db_conn.commit()
 
-        # Add the new message to the messages table
-        if question != "...":
-            cursor.execute("INSERT INTO messages (user, content) VALUES (?, ?)", (name, question))
-            db_conn.commit()
+            # Add the new message to the messages table
+            if question != "...":
+                cursor.execute("INSERT INTO messages (user, content) VALUES (?, ?)", (name, question))
+                db_conn.commit()
 
-        # Retrieve the chat history for this user
-        cursor.execute("SELECT content FROM messages WHERE user = ? ORDER BY timestamp", (name,))
-        dbdata = cursor.fetchall()
-        history = [ChatCompletionMessage(role="user", content=d[0]) for d in dbdata]
+            # Retrieve the chat history for this user
+            cursor.execute("SELECT content FROM messages WHERE user = ? ORDER BY timestamp", (name,))
+            dbdata = cursor.fetchall()
+            history = [ChatCompletionMessage(role="user", content=d[0]) for d in dbdata]
 
-        db_conn.close()
+            db_conn.close()
 
-        # Formulate the question and append it to history
-        formatted_question = f"{name} asked {ainame} the question {question}"
-        history.append(ChatCompletionMessage(role="user", content=formatted_question))
+            # Formulate the question and append it to history
+            formatted_question = f"{name} asked {ainame} the question {question}"
+            history.append(ChatCompletionMessage(role="user", content=formatted_question))
 
-        send_to_llm("twitch", name, formatted_question, history, ainame, self.ai_personality)
+            send_to_llm("twitch", name, formatted_question, history, ainame, self.ai_personality)
+        except Exception as e:
+            logger.error("Error in chat_request twitch bot:", e)
 
     # set the personality of the bot
     @commands.command(name="personality")
     async def personality(self, ctx: commands.Context):
-        personality = ctx.message.content.replace('!personality','')
-        pattern = re.compile(r'^[a-zA-Z0-9 ,.!?;:()\'\"-]*$')
-        logger.debug(f"--- Got personality switch from twitch: %s" % personality)
-        # vett the personality asked for to make sure it is less than 100 characters and alphanumeric, else tell the chat user it is not the right format
-        if len(personality) > 500:
-            logger.info(f"{ctx.message.author.name} tried to alter the personality to {personality} yet is too long.")
-            await ctx.send(f"{ctx.message.author.name} the personality you have chosen is too long, please choose a personality that is 100 characters or less")
-            return
-        if not pattern.match(personality):
-            logger.info(f"{ctx.message.author.name} tried to alter the personality to {personality} yet is not alphanumeric.")
-            await ctx.send(f"{ctx.message.author.name} the personality you have chosen is not alphanumeric, please choose a personality that is alphanumeric")
-            return
-        await ctx.send(f"{ctx.message.author.name} switched personality to {personality}")
-        # set our personality to the content
-        self.ai_personality = personality
+        try:
+            personality = ctx.message.content.replace('!personality','')
+            pattern = re.compile(r'^[a-zA-Z0-9 ,.!?;:()\'\"-]*$')
+            logger.debug(f"--- Got personality switch from twitch: %s" % personality)
+            # vett the personality asked for to make sure it is less than 100 characters and alphanumeric, else tell the chat user it is not the right format
+            if len(personality) > 500:
+                logger.info(f"{ctx.message.author.name} tried to alter the personality to {personality} yet is too long.")
+                await ctx.send(f"{ctx.message.author.name} the personality you have chosen is too long, please choose a personality that is 100 characters or less")
+                return
+            if not pattern.match(personality):
+                logger.info(f"{ctx.message.author.name} tried to alter the personality to {personality} yet is not alphanumeric.")
+                await ctx.send(f"{ctx.message.author.name} the personality you have chosen is not alphanumeric, please choose a personality that is alphanumeric")
+                return
+            await ctx.send(f"{ctx.message.author.name} switched personality to {personality}")
+            # set our personality to the content
+            self.ai_personality = personality
+        except Exception as e:
+            logger.error("Error in personality command twitch bot:", e)
 
     # set the name of the bot
     @commands.command(name="name")
     async def name(self, ctx: commands.Context):
-        name = ctx.message.content.replace('!name','').strip().replace(' ', '_')
-        pattern = re.compile(r'^[a-zA-Z0-9 ,.!?;:()\'\"-]*$')
-        logger.debug(f"--- Got name switch from twitch: %s" % name)
-        # confirm name has no spaces and is 12 or less characters and alphanumeric, else tell the chat user it is not the right format
-        if len(name) > 32:
-            logger.info(f"{ctx.message.author.name} tried to alter the name to {name} yet is too long.")
-            await ctx.send(f"{ctx.message.author.name} the name you have chosen is too long, please choose a name that is 12 characters or less")
-            return
-        if not pattern.match(name):
-            logger.info(f"{ctx.message.author.name} tried to alter the name to {name} yet is not alphanumeric.")
-            await ctx.send(f"{ctx.message.author.name} the name you have chosen is not alphanumeric, please choose a name that is alphanumeric")
-            return
-        await ctx.send(f"{ctx.message.author.name} switched name to {name}")
-        # set our name to the content
-        self.ai_name = name
-        # add to the personalities known
-        personalities.append(name)
+        try:
+            name = ctx.message.content.replace('!name','').strip().replace(' ', '_')
+            pattern = re.compile(r'^[a-zA-Z0-9 ,.!?;:()\'\"-]*$')
+            logger.debug(f"--- Got name switch from twitch: %s" % name)
+            # confirm name has no spaces and is 12 or less characters and alphanumeric, else tell the chat user it is not the right format
+            if len(name) > 32:
+                logger.info(f"{ctx.message.author.name} tried to alter the name to {name} yet is too long.")
+                await ctx.send(f"{ctx.message.author.name} the name you have chosen is too long, please choose a name that is 12 characters or less")
+                return
+            if not pattern.match(name):
+                logger.info(f"{ctx.message.author.name} tried to alter the name to {name} yet is not alphanumeric.")
+                await ctx.send(f"{ctx.message.author.name} the name you have chosen is not alphanumeric, please choose a name that is alphanumeric")
+                return
+            await ctx.send(f"{ctx.message.author.name} switched name to {name}")
+            # set our name to the content
+            self.ai_name = name
+            # add to the personalities known
+            personalities.append(name)
+        except Exception as e:
+            logger.error("Error in name command twitch bot:", e)
 
 ## Allows async running in thread for events
 def run_bot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    ## Bot config
-    bot = commands.Bot(
-        token=os.environ['TMI_TOKEN'],
-        client_id=os.environ['CLIENT_ID'],
-        nick=os.environ['BOT_NICK'],
-        prefix=os.environ['BOT_PREFIX'],
-        initial_channels=[os.environ['CHANNEL']])
-
-
-    # Setup bot responses
-    my_cog = AiTwitchBot(bot)
-    bot.add_cog(my_cog)
-
     try:
-        loop.run_until_complete(bot.start())
-    finally:
-        loop.close()
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        ## Bot config
+        bot = commands.Bot(
+            token=os.environ['TMI_TOKEN'],
+            client_id=os.environ['CLIENT_ID'],
+            nick=os.environ['BOT_NICK'],
+            prefix=os.environ['BOT_PREFIX'],
+            initial_channels=[os.environ['CHANNEL']])
+
+        # Setup bot responses
+        my_cog = AiTwitchBot(bot)
+        bot.add_cog(my_cog)
+
+        try:
+            loop.run_until_complete(bot.start())
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error("Error in run_bot():", e)
 
 ## Twitch Chat Bot
 def twitch_worker():
-    run_bot()
+    try:
+        run_bot()
 
-    while not exit_now:
-        # check if we are connected, if not connect and get channel setup,
-        # send a bot message if first time
-        time.sleep(0.1)
-        continue
+        while not exit_now:
+            # check if we are connected, if not connect and get channel setup,
+            # send a bot message if first time
+            time.sleep(0.1)
+            continue
+    except Exception as e:
+        logger.error("Error in twitch worker:", e)
 
 ## AI Conversation
 def prompt_worker():
     while not exit_now:
-        request = None
-        question = ""
-        user_messages = None
+        try:
+            request = None
+            question = ""
+            user_messages = None
 
-        while not exit_now:
-            if not twitch_queue.empty():
-                # Prioritize twitch_queue
-                request = twitch_queue.get()
-                logger.debug("--- prompt_worker(): Got back twitch queue packet: %s" % json.dumps(request))
-                break
-            elif not prompt_queue.empty():
-                # If twitch_queue is empty, check prompt_queue
-                request = prompt_queue.get()
-                logger.debug("--- prompt_worker(): Got back queue packet: %s" % json.dumps(request))
-                break
+            while not exit_now:
+                if not twitch_queue.empty():
+                    # Prioritize twitch_queue
+                    request = twitch_queue.get()
+                    logger.debug("--- prompt_worker(): Got back twitch queue packet: %s" % json.dumps(request))
+                    break
+                elif not prompt_queue.empty():
+                    # If twitch_queue is empty, check prompt_queue
+                    request = prompt_queue.get()
+                    logger.debug("--- prompt_worker(): Got back queue packet: %s" % json.dumps(request))
+                    break
+                else:
+                    # Both queues are empty, sleep for a bit then recheck
+                    time.sleep(0.1)
+                    continue
+
+            if 'question' in request and 'history' in request:
+                # extract our variables
+                question = request['question']
+                user_messages = request['history']
             else:
-                # Both queues are empty, sleep for a bit then recheck
-                time.sleep(0.1)
+                logger.error("--- prompt_worker(): Got back bad queue packet missing question or history: %s" % json.dumps(request))
                 continue
 
-        if 'question' in request and 'history' in request:
-            # extract our variables
-            question = request['question']
-            user_messages = request['history']
-        else:
-            logger.error("--- prompt_worker(): Got back bad queue packet missing question or history: %s" % json.dumps(request))
-            continue
+            if question == 'STOP':
+                output_queue.put('STOP')
+                break
 
-        if question == 'STOP':
-            output_queue.put('STOP')
-            break
+            logger.debug("--- prompt_worker(): running request: %s" % json.dumps(request))
+            output = llm.create_chat_completion(
+                messages=user_messages,
+                max_tokens=args.maxtokens,
+                temperature=args.temperature,
+                stream=True,
+                stop=args.stoptokens.split(',') if args.stoptokens else []  # use split() result if stoptokens is not empty
+            )
 
-        logger.debug("--- prompt_worker(): running request: %s" % json.dumps(request))
-        output = llm.create_chat_completion(
-            messages=user_messages,
-            max_tokens=args.maxtokens,
-            temperature=args.temperature,
-            stream=True,
-            stop=args.stoptokens.split(',') if args.stoptokens else []  # use split() result if stoptokens is not empty
-        )
+            speaktokens = ['\n', '.', '?', ',']
+            if args.streamspeak:
+                speaktokens.append(' ')
 
-        speaktokens = ['\n', '.', '?', ',']
-        if args.streamspeak:
-            speaktokens.append(' ')
+            token_count = 0
+            tokens_to_speak = 0
+            role = ""
+            accumulator = []
 
-        token_count = 0
-        tokens_to_speak = 0
-        role = ""
-        accumulator = []
+            if question != "...":
+                if args.nosync:
+                    output_queue.put(question)
+                    if args.render:
+                        mux_text_queue.put(question)
+                        new_text_data_event.set()
+                speak_queue.put(question)
 
-        if question != "...":
-            if args.nosync:
-                output_queue.put(question)
-                if args.render:
-                    mux_text_queue.put(question)
-                    new_text_data_event.set()
-            speak_queue.put(question)
-
-        for item in output:
-            if args.doubledebug:
-                logger.debug("--- Got Item: %s" % json.dumps(item))
-
-            delta = item["choices"][0]['delta']
-            if 'role' in delta:
-                logger.debug(f"--- Found Role: {delta['role']}: ")
-                role = delta['role']
-
-            # Check if we got a token
-            if 'content' not in delta:
+            for item in output:
                 if args.doubledebug:
-                     logger.error(f"--- Skipping lack of content: {delta}")
-                continue
-            token = delta['content']
-            accumulator.append(token)
-            token_count += 1
-            tokens_to_speak += 1
+                    logger.debug("--- Got Item: %s" % json.dumps(item))
 
-            if args.nosync:
-                output_queue.put(token)
+                delta = item["choices"][0]['delta']
+                if 'role' in delta:
+                    logger.debug(f"--- Found Role: {delta['role']}: ")
+                    role = delta['role']
 
-            sub_tokens = re.split('([ ,.\n?])', token)
-            for sub_token in sub_tokens:
-                if sub_token in speaktokens and tokens_to_speak >= args.tokenstospeak:
-                    line = ''.join(accumulator)
-                    if line.strip():  # check if line is not empty
-                        spoken_line = clean_text_for_tts(line)
-                        if spoken_line.strip():  # check if line is not empty
-                            speak_queue.put(spoken_line)
-                            accumulator.clear()  # Clear the accumulator after sending to speak_queue
-                            tokens_to_speak = 0  # Reset the counter
-                            break;
+                # Check if we got a token
+                if 'content' not in delta:
+                    if args.doubledebug:
+                         logger.error(f"--- Skipping lack of content: {delta}")
+                    continue
+                token = delta['content']
+                accumulator.append(token)
+                token_count += 1
+                tokens_to_speak += 1
 
-        # Check if there are any remaining tokens in the accumulator after processing all tokens
-        if accumulator:
-            line = ''.join(accumulator)
-            if line.strip():
-                spoken_line = clean_text_for_tts(line)
-                if spoken_line.strip():
-                    speak_queue.put(spoken_line)
-                    accumulator.clear()  # Clear the accumulator after sending to speak_queue
-                    tokens_to_speak = 0  # Reset the counter
+                if args.nosync:
+                    output_queue.put(token)
 
-        # Stop the output loop
-        output_queue.put('STOP')
+                sub_tokens = re.split('([ ,.\n?])', token)
+                for sub_token in sub_tokens:
+                    if sub_token in speaktokens and tokens_to_speak >= args.tokenstospeak:
+                        line = ''.join(accumulator)
+                        if line.strip():  # check if line is not empty
+                            spoken_line = clean_text_for_tts(line)
+                            if spoken_line.strip():  # check if line is not empty
+                                speak_queue.put(spoken_line)
+                                accumulator.clear()  # Clear the accumulator after sending to speak_queue
+                                tokens_to_speak = 0  # Reset the counter
+                                break;
+
+            # Check if there are any remaining tokens in the accumulator after processing all tokens
+            if accumulator:
+                line = ''.join(accumulator)
+                if line.strip():
+                    spoken_line = clean_text_for_tts(line)
+                    if spoken_line.strip():
+                        speak_queue.put(spoken_line)
+                        accumulator.clear()  # Clear the accumulator after sending to speak_queue
+                        tokens_to_speak = 0  # Reset the counter
+
+            # Stop the output loop
+            output_queue.put('STOP')
+        except Exception as e:
+            logger.error("Error in prompt worker:", e)
 
 def cleanup():
     # When you're ready to exit the program:
+    teardown_display()
     speak_queue.put("STOP")
     text_queue.put("STOP")
     image_queue.put("STOP")
     output_queue.put("STOP")
     prompt_queue.put("STOP")
     twitch_queue.put("STOP")
-    #exit_now = True
+    exit_now = True
 
 def signal_handler(sig, frame):
     try:
@@ -1120,6 +1234,7 @@ def signal_handler(sig, frame):
         cleanup()
         sys.exit(1)
     except Exception as e:
+        logger.error("Error in signal handler:", e)
         sys.exit(1)
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -1137,6 +1252,12 @@ def main(stdscr):
     ### Main Loop
     next_question = ""
     have_ran = False
+
+    ## Setup render
+    if args.render:
+        setup_display()
+
+    # At the beginning of your main loop or program
     while not exit_now:
         time.sleep(0.1)
         next_question = ""
@@ -1169,13 +1290,11 @@ def main(stdscr):
             start_time = time.time()
             line_length = 0
 
-            # At the beginning of your main loop or program
-            setup_display()
-
             while not exit_now:
                 ## render
                 if args.render:
-                    render_worker()
+                    if render_worker() == False:
+                        logger.warning("render_worker exited false in main frame loop")
                     time.sleep(0.3)
 
                 text = ""
@@ -1205,11 +1324,11 @@ def main(stdscr):
 
             ## Render remaining images and subtitles
             if args.render:
-                while render_worker() != False:
-                    time.sleep(0.5)
-
-            # At the end of your main loop or program
-            teardown_display()
+                while exit_now:
+                    if render_worker() != False:
+                        time.sleep(0.5)
+                    else:
+                        break
 
             have_ran = True
             if not args.autogenerate:
@@ -1234,7 +1353,11 @@ def main(stdscr):
         except KeyboardInterrupt:
             stdscr.addstr(0, 0, "--- Recieved Ctrl+C, Exiting...")
             logger.error("--- Recieved Ctrl+C, Exiting...")
+            teardown_display()
             sys.exit(1)
+
+        # At the end of your main loop or program
+        teardown_display()
 
 ## Dummy for Curses
 if __name__ == "__main__":
@@ -1291,7 +1414,7 @@ if __name__ == "__main__":
     parser.add_argument("-sctx", "--smallcontext", type=int, default=4096, help="Model context for image generation, default 4096.")
     parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
     parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
-    parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Temperature to set LLM Model.")
+    parser.add_argument("-t", "--temperature", type=float, default=0.8, help="Temperature to set LLM Model.")
     parser.add_argument("-d", "--debug", action="store_true", default=False, help="Debug in a verbose manner.")
     parser.add_argument("-dd", "--doubledebug", action="store_true", default=False, help="Extra debugging output, very verbose.")
     parser.add_argument("-s", "--silent", action="store_true", default=False, help="Silent mode, No TTS Speaking.")
@@ -1385,7 +1508,7 @@ if __name__ == "__main__":
         args.roleenforcer.replace('Answer the question asked by', 'Create a story from the plotline given by')
         args.promptcompletion.replace('Answer:', 'Episode in Markdown Format:')
         args.promptcompletion.replace('Question', 'Plotline')
-        args.temperature = 0.8
+        args.temperature = 0.9
 
     if args.language != "":
         args.promptcompletion = "%s Speak in the %s language" % (args.promptcompletion, args.language)
