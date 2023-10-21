@@ -7,7 +7,7 @@ Chris Kennedy (C) The Groovy Organization Apache License
 
 Try it at https://twitch.com/groovyaibot to see in action.
 ```
-# Conscious Chat: Multispeaker/Multi-lingual LLM with TTS Twitch Stable Diffusion all free local LLM
+# Conscious Chat: Local Free to run 24/7 Multispeaker/Multi-lingual LLM with TTS Twitch Bot!
 
 This chatbot, developed by Chris Kennedy of The Groovy Organization, creates an engaging conversation environment through the use of multispeaker Language Models (LLM) and Text-to-Speech (TTS) technology. The goal of the project is to foster multi-user interactions among multiple AI entities, creating a Game of Life-like phenomenon for human entertainment and question answering.
 
