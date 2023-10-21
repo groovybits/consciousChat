@@ -812,6 +812,9 @@ def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_persona
 ## Twitch chat responses
 class AiTwitchBot(commands.Cog):
 
+    ai_name = ""
+    ai_personality = ""
+
     def __init__(self, bot):
         self.bot = bot
         self.ai_name = current_name
@@ -846,6 +849,7 @@ class AiTwitchBot(commands.Cog):
     async def chat_request(self, ctx: commands.Context):
         question = ctx.message.content.replace(f"!message ", '')
         name = ctx.message.author.name
+        default_ainame = self.ai_name
 
         # Remove unwanted characters
         translation_table = str.maketrans('', '', ':,')
@@ -855,9 +859,9 @@ class AiTwitchBot(commands.Cog):
         ainame = cleaned_question.split()[0] if cleaned_question else None
 
         # Check our list of personalities
-        if ai_name not in personalities:
-            logger.debug(f"--- {name} asked for {self.ai_name} but it doesn't exist, using default.")
-            ainame = self.ai_name    
+        if ainame not in personalities:
+            logger.debug(f"--- {name} asked for {default_ainame} but it doesn't exist, using default.")
+            ainame = default_ainame
 
         logger.debug(f"--- {name} asked {ainame} the question: {question}")
 
@@ -898,7 +902,7 @@ class AiTwitchBot(commands.Cog):
         db_conn.close()
 
         # Formulate the question and append it to history
-        formatted_question = f"{name} asked {ai_ame} the question {question}"
+        formatted_question = f"{name} asked {ainame} the question {question}"
         history.append(ChatCompletionMessage(role="user", content=formatted_question))
 
         send_to_llm("twitch", name, formatted_question, history, ainame, self.ai_personality)
@@ -1222,6 +1226,7 @@ if __name__ == "__main__":
     default_ai_name = "Buddha"
     default_human_name = "Human"
 
+    small_model = "models/zephyr-7b-alpha.Q2_K.gguf"
     default_model = "models/zephyr-7b-alpha.Q8_0.gguf"
     default_embedding_model = "models/q4-openllama-platypus-3b.gguf"
 
@@ -1236,6 +1241,8 @@ if __name__ == "__main__":
                         help="Have output use another language than the default English for text and speech. See the -ro option and uroman.pl program needed.")
     parser.add_argument("-pd", "--persistdirectory", type=str, default="vectordb_data",
                         help="Persist directory for Chroma Vector DB used for web page lookups and document analysis.")
+    parser.add_argument("-sm", "--smallmodel", type=str, default=small_model,
+                        help="File path to small model to load and use for image prompt generation. Default is %s" % small_model)
     parser.add_argument("-m", "--model", type=str, default=default_model,
                         help="File path to model to load and use. Default is %s" % default_model)
     parser.add_argument("-em", "--embeddingmodel", type=str, default=default_embedding_model,
@@ -1266,6 +1273,7 @@ if __name__ == "__main__":
     parser.add_argument("-sts", "--stoptokens", type=str, default="Question:,%s:,Human:,Plotline:" % (default_human_name),
                         help="Stop tokens to use, do not change unless you know what you are doing!")
     parser.add_argument("-ctx", "--context", type=int, default=32768, help="Model context, default 32768.")
+    parser.add_argument("-sctx", "--smallcontext", type=int, default=4096, help="Model context for image generation, default 4096.")
     parser.add_argument("-mt", "--maxtokens", type=int, default=0, help="Model max tokens to generate, default unlimited or 0.")
     parser.add_argument("-gl", "--gpulayers", type=int, default=0, help="GPU Layers to offload model to.")
     parser.add_argument("-t", "--temperature", type=float, default=0.7, help="Temperature to set LLM Model.")
@@ -1370,8 +1378,8 @@ if __name__ == "__main__":
     llm = Llama(model_path=args.model, n_ctx=args.context, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
     ## LLM Model for image prompt generation thread
-    llm_image = Llama(model_path=args.embeddingmodel,
-                      n_ctx=args.embeddingscontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
+    llm_image = Llama(model_path=args.smallmodel,
+                      n_ctx=args.smallcontext, verbose=args.doubledebug, n_gpu_layers=args.gpulayers)
 
     ## AI TTS Model for Speech
     ai_speaking_rate = args.aispeakingrate
