@@ -10,7 +10,7 @@ Chris Kennedy (C) The Groovy Organization Apache License
 
 This chatbot, developed by Chris Kennedy of The Groovy Organization, creates an engaging conversation environment through the use of multispeaker Language Models (LLM) and Text-to-Speech (TTS) technology. The goal of the project is to foster multi-user interactions among multiple AI entities, creating a Game of Life-like phenomenon for human entertainment and question answering.
 
-Try it at (Groovy AI Bot on Twitch)[https://twitch.com/groovyaibot] to see it in action!
+Try it at [Groovy AI Bot on Twitch](https://twitch.com/groovyaibot) to see it in action!
 
 This project is licensed under the Apache License. You can use it to build your Twitch AI chatbot empire.
 
