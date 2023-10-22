@@ -615,7 +615,7 @@ def speak_worker():
 
 def audio_worker():
     ## Pygame mixer initialization
-    pygame.mixer.init(frequency=16000, size=-16, channels=1, buffer=8196)
+    pygame.mixer.init(frequency=16000, size=-16, channels=1, buffer=args.audiopacketreadsize)
     pygame.init()
     
     audio_stopped = False
@@ -632,7 +632,6 @@ def audio_worker():
                 audio = audio_queue.get()
 
             if text == "" and audio == "":
-                time.sleep(0.1)
                 continue
 
             if audio == 'STOP':
@@ -1495,7 +1494,7 @@ def main(stdscr):
                 ## render
                 if args.render:
                     if render_worker() == False:
-                        time.sleep(0.6)
+                        time.sleep(.01)
 
                 text = ""
                 if not output_queue.empty():
@@ -1509,7 +1508,7 @@ def main(stdscr):
                     current_time = time.time()
                     if current_time - start_time > 120:
                         break
-                    time.sleep(0.3)
+                    time.sleep(0.1)
                     continue
 
                 if text != "":
@@ -1641,7 +1640,7 @@ if __name__ == "__main__":
     parser.add_argument("-gu", "--geturls", action="store_true", default=False, help="Get URLs from the prompt and use them to retrieve documents.")
     parser.add_argument("-si", "--saveimages", action="store_true", default=False, help="Save images to disk.")
     parser.add_argument("-ll", "--loglevel", type=str, default="info", help="Logging level: debug, info...")
-    parser.add_argument("-ars", "--audiopacketreadsize", type=int, default=32768, help="Size of audio packet read/write")
+    parser.add_argument("-ars", "--audiopacketreadsize", type=int, default=1024, help="Size of audio packet read/write")
     parser.add_argument("-ren", "--render", action="store_true", default=False, help="Render the output to a GUI OpenCV window for playback viewing.")
     parser.add_argument("-wi", "--width", type=int, default=1920, help="Width of rendered window, only used with -ren")
     parser.add_argument("-he", "--height", type=int, default=1080, help="Height of rendered window, only used with -ren")
