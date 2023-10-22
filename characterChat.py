@@ -1198,6 +1198,48 @@ class AiTwitchBot(commands.Cog):
         except Exception as e:
             logger.error("Error in personality command twitch bot: %s" % str(e))
 
+    ## music command - sends us a prompt to generate ai music with and then play it for the channel
+    @commands.command(name="music")
+    async def music(self, ctx: commands.Context):
+        try:
+            # get the name of the person who sent the message
+            name = ctx.message.author.name
+            # get the content of the message
+            content = ctx.message.content
+            # get the prompt from the content
+            prompt = content.replace('!music','')
+            # send the prompt to the llm
+            ### TODO send_to_llm("twitch", name, prompt, [], self.ai_name, self.ai_personality)
+        except Exception as e:
+            logger.error("Error in music command twitch bot: %s" % str(e))
+
+    ## list personalities command - sends us a list of the personalities we have
+    @commands.command(name="personalities")
+    async def listpersonalities(self, ctx: commands.Context):
+        try:
+            # get the name of the person who sent the message
+            name = ctx.message.author.name
+            # send the list of personalities
+            await ctx.send(f"{name} the personalities we have are {personalities}")
+        except Exception as e:
+            logger.error("Error in listpersonalities command twitch bot: %s" % str(e))
+
+    ## image command - sends us a prompt to generate ai images with and then send it to the channel
+    @commands.command(name="image")
+    async def image(self, ctx: commands.Context):
+        try:
+            # get the name of the person who sent the message
+            name = ctx.message.author.name
+            # get the content of the message
+            content = ctx.message.content
+            # get the prompt from the content
+            prompt = content.replace('!image','')
+            # send the prompt to the llm
+            # put into the image queue
+            image_queue.put(prompt)
+        except Exception as e:
+            logger.error("Error in image command twitch bot: %s" % str(e))
+
     # set the name of the bot
     @commands.command(name="name")
     async def name(self, ctx: commands.Context):
