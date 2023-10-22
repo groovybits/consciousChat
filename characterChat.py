@@ -26,7 +26,6 @@ from diffusers import DiffusionPipeline
 from bs4 import BeautifulSoup as Soup
 import sounddevice as sd
 import soundfile as sf
-import pyaudio
 import wave
 import queue
 import warnings
@@ -51,6 +50,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from chromadb.utils import embedding_functions
+import pygame.mixer
+from pygame.locals import USEREVENT
 
 """
 import psutil
@@ -613,13 +614,13 @@ def speak_worker():
             logger.error("Error exception in speak worker:", e)
 
 def audio_worker():
-    ## PyAudio stream and handler
-    pyaudio_stream = None
-    pyaudio_handler = None
-    pyaudio_handler = pyaudio.PyAudio()
-
+    ## Pygame mixer initialization
+    pygame.mixer.init(frequency=16000, size=-16, channels=1, buffer=8196)
+    pygame.init()
+    
     audio_stopped = False
     text_stopped = False
+    
     while not exit_now:
         try:
             text = ""
@@ -655,31 +656,14 @@ def audio_worker():
             if audio != "":
                 audiobuf = io.BytesIO(audio)
                 if audiobuf:
-                    ## Speak WAV TTS Output
-                    wave_obj = wave.open(audiobuf)
-                    ## Check if we have initialized the audio
-                    ##if pyaudio_stream == None:
-                    pyaudio_stream = pyaudio_handler.open(format=pyaudio_handler.get_format_from_width(wave_obj.getsampwidth()),
-                                    channels=wave_obj.getnchannels(),
-                                    rate=wave_obj.getframerate(),
-                                    output=True)
+                    ## Speak WAV TTS Output using pygame
+                    pygame.mixer.music.load(audiobuf)
+                    pygame.mixer.music.play()
+                    while pygame.mixer.music.get_busy():
+                        pygame.time.Clock().tick(10)
 
-                    ## Read and Speak
-                    while not exit_now:
-                        audiodata = wave_obj.readframes(args.audiopacketreadsize)
-                        if not audiodata:
-                            break
-                        pyaudio_stream.write(audiodata)
         except Exception as e:
             logger.error("Error exception in audio worker:", e)
-
-    ## Stop and cleanup speaking TODO keep this open
-    if pyaudio_stream:
-        pyaudio_stream.stop_stream()
-        pyaudio_stream.close()
-        if pyaudio_handler:
-            pyaudio_handler.terminate()
-
 
 def summarize_documents(documents):
     """
