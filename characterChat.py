@@ -538,7 +538,7 @@ class TwitchStreamer:
             self.video_writer.release()
         if self.save_to_file:
             self.audio_segment.export(self.audio_filename, format="wav")
-\
+
     def stream(self):
         try:
             with TwitchBufferedOutputStream(
