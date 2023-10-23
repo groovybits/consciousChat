@@ -500,13 +500,18 @@ def image_to_ascii(image, width):
     return ascii_image
 
 class TwitchStreamer:
-    def __init__(self, twitch_stream_key, width, height):
+    def __init__(self, twitch_stream_key, width, height, save_to_file=False, video_filename='output_video.avi', audio_filename='output_audio.wav'):
         self.data_queue = Queue()
         self.stop_event = threading.Event()
         self.twitch_stream_key = twitch_stream_key
         self.width = width
         self.height = height
+        self.save_to_file = save_to_file
+        self.video_filename = video_filename
+        self.audio_filename = audio_filename
         self.videostream = None
+        self.video_writer = None
+        self.audio_segment = AudioSegment.empty()
 
     def add_data(self, data):
         self.data_queue.put(data)
@@ -526,17 +531,39 @@ class TwitchStreamer:
                     image = data['image']
                     audio = data['audio']
 
-                    # Send video frame
+                    # Send video frame to Twitch
                     ret, buffer = cv2.imencode('.jpg', image)
                     if ret:
                         self.videostream.send_video_frame(buffer)
 
-                    # Send audio frame
+                    # Send audio frame to Twitch
                     audio_frame = audio.raw_data
                     self.videostream.send_audio(audio_frame, audio_frame)
 
+                    # Save to local files if enabled
+                    if self.save_to_file:
+                        # Initialize video writer if not done yet
+                        if self.video_writer is None:
+                            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                            self.video_writer = cv2.VideoWriter(self.video_filename, fourcc, 30.0, (self.width, self.height))
+
+                        # Write video frame to file
+                        self.video_writer.write(cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+
+                        # Append audio data to audio segment
+                        audio_segment = AudioSegment(data=audio.raw_data,
+                                                     sample_width=audio.sample_width,
+                                                     frame_rate=audio.frame_rate,
+                                                     channels=audio.channels)
+                        self.audio_segment += audio_segment
+
     def stop_streaming(self):
         self.stop_event.set()
+        if self.video_writer is not None:
+            self.video_writer.release()
+        if self.save_to_file:
+            self.audio_segment.export(self.audio_filename, format="wav")
+
 
 ## Image generation thread worker
 def image_worker():

@@ -61,6 +61,14 @@ This project is licensed under the Apache License. You can use it to build your 
 - Embeddings: LLama.cpp is slow
     - https://huggingface.co/Aryanne/OpenLlama-Platypus-3B-gguf
     - https://platypus-llm.github.io/
+- Twitch streaming direct to RTMP without local OBS plus Screen Capture
+    - Install python-twitch-stream
+
+```
+git clone https://github.com/317070/python-twitch-stream.git
+cd python-twitch-stream
+pip install .
+```
 
 ## Setup and Usage
 
