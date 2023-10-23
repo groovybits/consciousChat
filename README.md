@@ -27,6 +27,7 @@ This project is licensed under the Apache License. You can use it to build your 
 - **Episode Mode**: Enables the output to follow a TV episode script format.
 - **Multi-Lingual**: Ability to speak in most languages on output text and voice (if uroman.pl is installed).
 - **Webpage Retrieval**: Ability to look up all URLs in prompt and load up the LLM context with the summary + store them locally for future fast retrieval.
+- **Twitch Streaming** Direct RTMP output to Twitch of the images + subtitles + audio produced. No OBS or Desktop capture / local system playbackk required.
 - **Twitch Bot**: Ability to have twitch users interact with the conversation via Twitch chatrooms and an OBS. Future output will be direct to twitch as video.
 - **User History**: Bot has knowlege of users past questions to build up a context and impression of them.
 - **Stable Diffusion Images**: Images from output speaker lines, 6-10 a minute + capable with tokens driving generation by sentence chunking.
