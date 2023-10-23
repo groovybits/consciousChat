@@ -517,28 +517,33 @@ class TwitchStreamer:
         self.data_queue.put(data)
 
     def stream(self):
-        with TwitchBufferedOutputStream(
-                twitch_stream_key=self.twitch_stream_key,
-                width=self.width,
-                height=self.height,
-                fps=30.,
-                enable_audio=True,
-                verbose=False) as self.videostream:
+        try:
+            with TwitchBufferedOutputStream(
+                    twitch_stream_key=self.twitch_stream_key,
+                    width=self.width,
+                    height=self.height,
+                    fps=30.,
+                    enable_audio=True,
+                    verbose=True) as self.videostream:
 
-            while not self.stop_event.is_set():
-                if not self.data_queue.empty():
-                    data = self.data_queue.get()
-                    image = data['image']
-                    audio = data['audio']
+                while not self.stop_event.is_set():
+                    if not self.data_queue.empty():
+                        data = self.data_queue.get()
+                        image = data['image']
+                        audio = data['audio']
 
-                    # Send video frame to Twitch
-                    ret, buffer = cv2.imencode('.jpg', image)
-                    if ret:
-                        self.videostream.send_video_frame(buffer)
+                        # Send video frame to Twitch
+                        ret, buffer = cv2.imencode('.jpg', image)
+                        if ret:
+                            self.videostream.send_video_frame(buffer)
+                            logger.info("Sent video frame to Twitch")
+                        else:
+                            logger.error("Failed to encode video frame")
 
-                    # Send audio frame to Twitch
-                    audio_frame = audio.raw_data
-                    self.videostream.send_audio(audio_frame, audio_frame)
+                        # Send audio frame to Twitch
+                        audio_frame = audio.raw_data
+                        self.videostream.send_audio(audio_frame, audio_frame)
+                        logger.info("Sent audio frame to Twitch")
 
                     # Save to local files if enabled
                     if self.save_to_file:
@@ -556,6 +561,8 @@ class TwitchStreamer:
                                                      frame_rate=audio.frame_rate,
                                                      channels=audio.channels)
                         self.audio_segment += audio_segment
+        except Exception as e:
+            logger.error(f"An error occurred: {e}", exc_info=True)
 
     def stop_streaming(self):
         self.stop_event.set()
