@@ -467,38 +467,6 @@ def render_worker():
     except Exception as e:
         logger.error("Error in rendering worker:", e)
 
-class ImageHistory:
-    def __init__(self):
-        self.images = []
-
-    def add_image(self, pil_image, prompt):
-        # Store in the data structure
-        image_data = {"image": pil_image, "prompt": prompt}
-        self.images.append(image_data)
-
-        # Sanitize the filename
-        id = uuid.uuid4().hex
-        filename = "".join([c for c in prompt if c.isalpha() or c.isdigit() or c in (' ', '.')])
-        filename = "_".join(filename.split())
-        filename = filename[:30]
-        filepath = os.path.join("saved_images", f"{filename}_{id}.png")
-
-        # Save to disk
-        pil_image.save(filepath)
-        return "%s/%s" % (filepath, filename)
-
-image_history = ImageHistory()
-
-def image_to_ascii(image, width):
-    image = image.resize((width, int((image.height/image.width) * width * 0.55)), Image.LANCZOS)
-    image = image.convert('L')  # Convert to grayscale
-
-    pixels = list(image.getdata())
-    ascii_chars = ["@", "#", "S", "%", "?", "*", "+", ";", ":", ",", "."]
-    ascii_image = [ascii_chars[pixel//25] for pixel in pixels]
-    ascii_image = ''.join([''.join(ascii_image[i:i+width]) + '\n' for i in range(0, len(ascii_image), width)])
-    return ascii_image
-
 class TwitchStreamer:
     def __init__(self, twitch_stream_key, width, height, save_to_file=False, video_filename='output_video.avi', audio_filename='output_audio.wav'):
         self.data_queue = Queue()
@@ -516,6 +484,61 @@ class TwitchStreamer:
     def add_data(self, data):
         self.data_queue.put(data)
 
+    def add_text_to_image(self, image, text):
+        if image is not None:
+            # Maintain aspect ratio and add black bars
+            desired_ratio = 16 / 9
+            current_ratio = image.shape[1] / image.shape[0]
+
+            if current_ratio > desired_ratio:
+                new_height = int(image.shape[1] / desired_ratio)
+                padding = (new_height - image.shape[0]) // 2
+                image = cv2.copyMakeBorder(image, padding, padding, 0, 0, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+            else:
+                new_width = int(image.shape[0] * desired_ratio)
+                padding = (new_width - image.shape[1]) // 2
+                image = cv2.copyMakeBorder(image, 0, 0, padding, padding, cv2.BORDER_CONSTANT, value=[0, 0, 0])
+
+            # Resize for viewing
+            image = cv2.resize(image, (args.width, args.height), interpolation=cv2.INTER_LINEAR)
+
+            def contains_japanese(text):
+                for char in text:
+                    if any([start <= ord(char) <= end for start, end in [
+                        (0x3040, 0x309F),  # Hiragana
+                        (0x30A0, 0x30FF),  # Katakana
+                        (0x4E00, 0x9FFF),  # Kanji
+                        (0x3400, 0x4DBF)   # Kanji (extension A)
+                    ]]):
+                        return True
+                return False
+
+            wrapped_text = textwrap.wrap(text, width=45)  # Adjusted width
+            y_pos = image.shape[0] - 40  # Adjusted height from bottom
+
+            font_size = 2
+            font_thickness = 4  # Adjusted for bolder font
+            border_thickness = 15  # Adjusted for bolder border
+
+            for line in reversed(wrapped_text):
+                text_width, _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_DUPLEX, font_size, font_thickness)[0]
+                x_pos = (image.shape[1] - text_width) // 2  # Center the text
+                if contains_japanese(line):
+                    image = draw_japanese_text_on_image(image, line, (x_pos, y_pos), args.japanesefont,60)
+                else:
+                    cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (0, 0, 0), border_thickness)
+                    cv2.putText(image, line, (x_pos, y_pos), cv2.FONT_HERSHEY_DUPLEX, font_size, (255, 255, 255), font_thickness)
+                y_pos -= 60
+
+        return image  # returning the modified image
+
+    def stop_streaming(self):
+        self.stop_event.set()
+        if self.video_writer is not None:
+            self.video_writer.release()
+        if self.save_to_file:
+            self.audio_segment.export(self.audio_filename, format="wav")
+\
     def stream(self):
         try:
             with TwitchBufferedOutputStream(
@@ -531,6 +554,10 @@ class TwitchStreamer:
                         data = self.data_queue.get()
                         image = data['image']
                         audio = data['audio']
+                        text = data.get('text', '')  # Assuming text might be passed in the data dictionary
+
+                        # Add text to image
+                        image = self.add_text_to_image(image, text)
 
                         # Send video frame to Twitch
                         ret, buffer = cv2.imencode('.jpg', image)
@@ -564,13 +591,37 @@ class TwitchStreamer:
         except Exception as e:
             logger.error(f"An error occurred: {e}", exc_info=True)
 
-    def stop_streaming(self):
-        self.stop_event.set()
-        if self.video_writer is not None:
-            self.video_writer.release()
-        if self.save_to_file:
-            self.audio_segment.export(self.audio_filename, format="wav")
+class ImageHistory:
+    def __init__(self):
+        self.images = []
 
+    def add_image(self, pil_image, prompt):
+        # Store in the data structure
+        image_data = {"image": pil_image, "prompt": prompt}
+        self.images.append(image_data)
+
+        # Sanitize the filename
+        id = uuid.uuid4().hex
+        filename = "".join([c for c in prompt if c.isalpha() or c.isdigit() or c in (' ', '.')])
+        filename = "_".join(filename.split())
+        filename = filename[:30]
+        filepath = os.path.join("saved_images", f"{filename}_{id}.png")
+
+        # Save to disk
+        pil_image.save(filepath)
+        return "%s/%s" % (filepath, filename)
+
+image_history = ImageHistory()
+
+def image_to_ascii(image, width):
+    image = image.resize((width, int((image.height/image.width) * width * 0.55)), Image.LANCZOS)
+    image = image.convert('L')  # Convert to grayscale
+
+    pixels = list(image.getdata())
+    ascii_chars = ["@", "#", "S", "%", "?", "*", "+", ";", ":", ",", "."]
+    ascii_image = [ascii_chars[pixel//25] for pixel in pixels]
+    ascii_image = ''.join([''.join(ascii_image[i:i+width]) + '\n' for i in range(0, len(ascii_image), width)])
+    return ascii_image
 
 ## Image generation thread worker
 def image_worker():
