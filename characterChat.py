@@ -468,13 +468,13 @@ def render_worker():
         logger.error("Error in rendering worker:", e)
 
 class TwitchStreamer:
-    def __init__(self, twitch_stream_key, width, height, save_to_file=False, video_filename='output_video.avi', audio_filename='output_audio.wav'):
+    def __init__(self, twitch_stream_key, width, height, video_filename='output_video.avi', audio_filename='output_audio.wav'):
         self.data_queue = Queue()
         self.stop_event = threading.Event()
         self.twitch_stream_key = twitch_stream_key
         self.width = width
         self.height = height
-        self.save_to_file = save_to_file
+        self.save_to_file = args.savetofile
         self.video_filename = video_filename
         self.audio_filename = audio_filename
         self.videostream = None
@@ -1832,6 +1832,7 @@ if __name__ == "__main__":
     parser.add_argument("-sip", "--systemimageprompt", type=str,
                         default="You are an image prompt generator,take the paragraph and summarize it into a description for image generation.", help="System prompt for image prompt generation from question or story chunks.")
     parser.add_argument("-gpu", "--gputype", type=str, default="mps", help="GPU Type. cpu, mps, cuda")
+    parser.add_argument("-stf", "--savetofile", action="store_true", default=False, help="Save output to file.")
 
     args = parser.parse_args()
 
