@@ -52,6 +52,15 @@ from PIL import Image, ImageDraw, ImageFont
 from chromadb.utils import embedding_functions
 import pygame.mixer
 from pygame.locals import USEREVENT
+import socket
+from twitchstream.outputvideo import TwitchBufferedOutputStream
+import threading
+import cv2
+import numpy as np
+from pydub import AudioSegment
+from queue import Queue
+import argparse
+import time
 
 """
 import psutil
@@ -174,7 +183,11 @@ def simulate_image_generation(num_samples=5):
     for _ in range(num_samples):
         # Simulate image data generation
         image_data = np.zeros((600, 800, 3), dtype=np.uint8)  # Placeholder blank image
-        mux_image_queue.put(image_data)
+        media = {}
+        media['text'] = ""
+        media['audio'] = ""
+        media['image'] = image_data
+        mux_image_queue.put(media)
         
         # Simulate text metadata generation (randomly decide to add text)
         if random.choice([True, False]):
@@ -486,16 +499,73 @@ def image_to_ascii(image, width):
     ascii_image = ''.join([''.join(ascii_image[i:i+width]) + '\n' for i in range(0, len(ascii_image), width)])
     return ascii_image
 
+class TwitchStreamer:
+    def __init__(self, twitch_stream_key, width, height):
+        self.data_queue = Queue()
+        self.stop_event = threading.Event()
+        self.twitch_stream_key = twitch_stream_key
+        self.width = width
+        self.height = height
+        self.videostream = None
+
+    def add_data(self, data):
+        self.data_queue.put(data)
+
+    def stream(self):
+        with TwitchBufferedOutputStream(
+                twitch_stream_key=self.twitch_stream_key,
+                width=self.width,
+                height=self.height,
+                fps=30.,
+                enable_audio=True,
+                verbose=False) as self.videostream:
+
+            while not self.stop_event.is_set():
+                if not self.data_queue.empty():
+                    data = self.data_queue.get()
+                    image = data['image']
+                    audio = data['audio']
+
+                    # Send video frame
+                    ret, buffer = cv2.imencode('.jpg', image)
+                    if ret:
+                        self.videostream.send_video_frame(buffer)
+
+                    # Send audio frame
+                    audio_frame = audio.raw_data
+                    self.videostream.send_audio(audio_frame, audio_frame)
+
+    def stop_streaming(self):
+        self.stop_event.set()
+
+## Image generation thread worker
 def image_worker():
     last_image_generation = time.time()
+
+    ## Twitch streaming
+    streamer = None
+    if args.twitchstreamkey != "":
+        streamer = TwitchStreamer(args.twitchstreamkey, args.width, args.height)
+        streaming_thread = threading.Thread(target=streamer.stream)
+        streaming_thread.start()
+
+    ## Image generation loop
     while not exit_now:
         try:
             llm_text = ""
+            media = None
+            audio = None
             if not image_queue.empty():
-                llm_text = image_queue.get()
-                if llm_text.strip() == "":
+                media = image_queue.get()
+                if 'text' in media:
+                    llm_text = media['text']
+                if 'audio' in media:
+                    audio = media['audio']
+                else:
                     time.sleep(.01)
                     continue
+                if llm_text == 'STOP':
+                    break
             else:
                 time.sleep(.01)
                 continue
@@ -547,6 +617,9 @@ def image_worker():
                          guidance_scale=7.5,
                          num_images_per_prompt=1
                     ).images[0]
+            
+            if streamer is not None:
+                streamer.add_data({'image': image, 'audio': AudioSegment.from_file(audio)})  # Add data to be streamed
 
             # Store the image in the history and save to disk
             if args.saveimages:
@@ -565,6 +638,10 @@ def image_worker():
                 print(image_to_ascii(image, 50), end='', flush=True)
         except Exception as e:
             logger.error("Error exception in image worker:", e)
+
+    if streamer is not None:
+        streamer.stop_streaming()
+        streaming_thread.join()
 
 def speak_worker():
     encoding_buffer_text = ""
@@ -615,12 +692,13 @@ def speak_worker():
 
 def audio_worker():
     ## Pygame mixer initialization
-    pygame.mixer.init(frequency=16000, size=-16, channels=1, buffer=args.audiopacketreadsize)
-    pygame.init()
-    
+    if not args.silent:
+        pygame.mixer.init(frequency=16000, size=-16, channels=1, buffer=args.audiopacketreadsize)
+        pygame.init()
+
     audio_stopped = False
     text_stopped = False
-    
+
     while not exit_now:
         try:
             text = ""
@@ -644,7 +722,15 @@ def audio_worker():
                 break
 
             ## Image Queue for text
-            image_queue.put(text)
+            ##image_queue.put(text)
+
+            ## create media structure and put into image Queue
+            media = {}
+            media['text'] = text
+            media['audio'] = audio
+            media['image'] = None
+            image_queue.put(media)
+
             ## Output text to sync if requested
             if not args.nosync and text != "" and text != "STOP":
                 output_queue.put(text)
@@ -652,14 +738,16 @@ def audio_worker():
                     mux_text_queue.put(text)
                     new_text_data_event.set()
 
-            if audio != "":
-                audiobuf = io.BytesIO(audio)
-                if audiobuf:
-                    ## Speak WAV TTS Output using pygame
-                    pygame.mixer.music.load(audiobuf)
-                    pygame.mixer.music.play()
-                    while pygame.mixer.music.get_busy():
-                        pygame.time.Clock().tick(10)
+            ## If not wanting to hear audio as a preview locally, don't play it
+            if not args.silent:
+                if audio != "":
+                    audiobuf = io.BytesIO(audio)
+                    if audiobuf:
+                        ## Speak WAV TTS Output using pygame
+                        pygame.mixer.music.load(audiobuf)
+                        pygame.mixer.music.play()
+                        while pygame.mixer.music.get_busy():
+                            pygame.time.Clock().tick(10)
 
         except Exception as e:
             logger.error("Error exception in audio worker:", e)
@@ -880,7 +968,7 @@ def get_user_input():
 
 ## Speak a line
 def encode_line(line, speaker = "ai"):
-    if args.silent:
+    if args.silent and (not args.twitch and not args.twitchstreamkey):
         return None
     if not line or line == "":
         return None
@@ -1235,7 +1323,11 @@ class AiTwitchBot(commands.Cog):
             prompt = content.replace('!image','')
             # send the prompt to the llm
             # put into the image queue
-            image_queue.put(prompt)
+            media = {}
+            media['text'] = prompt
+            media['audio'] = None
+            media['image'] = None
+            image_queue.put(media)
         except Exception as e:
             logger.error("Error in image command twitch bot: %s" % str(e))
 
@@ -1417,7 +1509,11 @@ def cleanup():
     teardown_display()
     speak_queue.put("STOP")
     text_queue.put("STOP")
-    image_queue.put("STOP")
+    media = {}
+    media['text'] = "STOP"
+    media['audio'] = None
+    media['image'] = None
+    image_queue.put(media)
     output_queue.put("STOP")
     prompt_queue.put("STOP")
     twitch_queue.put("STOP")
@@ -1637,6 +1733,7 @@ if __name__ == "__main__":
     parser.add_argument("-im", "--imagemodel", type=str, default="runwayml/stable-diffusion-v1-5", help="Stable Diffusion Image Model to use.")
     parser.add_argument("-ns", "--nosync", action="store_true", default=False, help="Don't sync the text with the speaking, output realtiem.")
     parser.add_argument("-tw", "--twitch", action="store_true", default=False, help="Twitch mode, output to twitch chat.")
+    parser.add_argument("-tsk", "--twitchstreamkey", type=str, default="", help="Twitch Stream Key")
     parser.add_argument("-gu", "--geturls", action="store_true", default=False, help="Get URLs from the prompt and use them to retrieve documents.")
     parser.add_argument("-si", "--saveimages", action="store_true", default=False, help="Save images to disk.")
     parser.add_argument("-ll", "--loglevel", type=str, default="info", help="Logging level: debug, info...")
@@ -1649,6 +1746,7 @@ if __name__ == "__main__":
     parser.add_argument("-fs", "--fullscreen", action="store_true", default=False, help="Full Screen")
     parser.add_argument("-sip", "--systemimageprompt", type=str,
                         default="You are an image prompt generator,take the paragraph and summarize it into a description for image generation.", help="System prompt for image prompt generation from question or story chunks.")
+    parser.add_argument("-gpu", "--gputype", type=str, default="mps", help="GPU Type. cpu, mps, cuda")
 
     args = parser.parse_args()
 
@@ -1659,6 +1757,10 @@ if __name__ == "__main__":
 	## Lots of debuggin
     if args.doubledebug:
         args.loglevel = "debug"
+
+    ## Twitch stream key
+    if os.environ['TWITCH_STREAM_KEY'] != "":
+        args.twitchstreamkey = os.environ['TWITCH_STREAM_KEY']
 
     LOGLEVEL = logger.INFO
 
@@ -1689,7 +1791,8 @@ if __name__ == "__main__":
     pipe.set_progress_bar_config(disable=True)
 
     ## Mac silicon GPU
-    pipe = pipe.to("mps") # cpu or cuda
+    if args.gputype == "mps":
+        pipe = pipe.to("mps") # cpu or cuda
 
     # Recommended if your computer has < 64 GB of RAM
     if (vm.total / (1024**3)) < 64:
@@ -1732,7 +1835,7 @@ if __name__ == "__main__":
     user_speaking_rate = args.userspeakingrate
     user_noise_scale = args.usernoisescale
 
-    if not args.silent:
+    if not args.silent or (args.twitch and args.twitchstreamkey):
         aimodel = VitsModel.from_pretrained(facebook_model)
         aimodel = aimodel
         aitokenizer = AutoTokenizer.from_pretrained(facebook_model, is_uroman=True, normalize=True)

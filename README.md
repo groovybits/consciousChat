@@ -74,6 +74,8 @@ This project is licensed under the Apache License. You can use it to build your 
     - Use the "-ro" option to romanize the TTS speaking text.
 - Optional Japanese font like [Noto-Sans-JP](https://fonts.google.com/noto/specimen/Noto+Sans+JP?noto.query=jp) using the -jf <font_path> option.
     - Use -ro -jf <japanese_font> to allow japanese speaking and subtitles to work. 
+- Twitch Python streaming library
+    - [Twitch Python Stream Package](https://github.com/317070/python-twitch-stream)
 
 ```bash
 # Development SDK on Mac OS X
