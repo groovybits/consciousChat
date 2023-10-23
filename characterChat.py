@@ -533,21 +533,6 @@ class TwitchStreamer:
 
         return image  # returning the modified image
 
-    def prepare_audio(audio_buffer):
-        # Step 1: Read audio data from BytesIO buffer
-        audio_buffer.seek(0)
-        audio_data, sample_rate = sf.read(audio_buffer)
-
-        # Step 2: Ensure audio data is stereo
-        if len(audio_data.shape) == 1:
-            # Duplicate mono channel to create stereo
-            left_audio = right_audio = audio_data
-        else:
-            left_audio = audio_data[:, 0]
-            right_audio = audio_data[:, 1]
-
-        return left_audio, right_audio
-
     def stop_streaming(self):
         self.stop_event.set()
         if self.video_writer is not None:
@@ -575,10 +560,10 @@ class TwitchStreamer:
                         # Add text to image
                         image = self.add_text_to_image(image, text)
 
-                        # Convert image to NumPy array
+                        ## If image is a PIL Image:
                         image_np = np.array(image)
                         image_np = image_np.astype(np.uint8)
-                        # Convert RGB to BGR
+                        # Convert RGB to BGR if needed
                         image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
                         # Send video frame to Twitch
@@ -590,9 +575,12 @@ class TwitchStreamer:
                             logger.error("TwitchStreamer: Failed to encode video frame")
 
                         # convert audio and spli tino channels
-                        audiobuf = io.BytesIO(audio)
-                        if audiobuf:
-                            left_audio, right_audio = self.prepare_audio(audiobuf)
+                        audio.seek(0)
+                        audio_data, samplerate = sf.read(audio, dtype='float32')
+                        left_audio = audio_data[:, 0]
+                        right_audio = audio_data[:, 1]
+
+                        if right_audio and left_audio:
                             # Step 3: Pass stereo audio data to Twitch streamer
                             self.videostream.send_audio(left_audio, right_audio)
                             logger.info("Sent audio frame to Twitch")
