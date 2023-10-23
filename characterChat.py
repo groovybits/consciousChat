@@ -16,7 +16,8 @@ import json
 import inflect
 import subprocess
 import torch
-from transformers import VitsModel, AutoTokenizer, pipeline, set_seed, logging
+from transformers import VitsModel, AutoTokenizer, pipeline, set_seed
+from transformers import logging as trlogging
 from llama_cpp import Llama, ChatCompletionMessage
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import Chroma
@@ -29,7 +30,7 @@ import soundfile as sf
 import wave
 import queue
 import warnings
-import logging as logger
+import logging
 import sqlite3
 from urllib.parse import urlparse
 import urllib3
@@ -87,7 +88,7 @@ chat_db = "db/chat.db"
 personalities = []
 
 ## Quiet operation, no warnings
-logging.set_verbosity_error()
+trlogging.set_verbosity_error()
 warnings.simplefilter(action='ignore', category=Warning)
 warnings.filterwarnings("ignore", category=urllib3.exceptions.NotOpenSSLWarning)
 from urllib3.exceptions import NotOpenSSLWarning
@@ -532,6 +533,21 @@ class TwitchStreamer:
 
         return image  # returning the modified image
 
+    def prepare_audio(audio_buffer):
+        # Step 1: Read audio data from BytesIO buffer
+        audio_buffer.seek(0)
+        audio_data, sample_rate = sf.read(audio_buffer)
+
+        # Step 2: Ensure audio data is stereo
+        if len(audio_data.shape) == 1:
+            # Duplicate mono channel to create stereo
+            left_audio = right_audio = audio_data
+        else:
+            left_audio = audio_data[:, 0]
+            right_audio = audio_data[:, 1]
+
+        return left_audio, right_audio
+
     def stop_streaming(self):
         self.stop_event.set()
         if self.video_writer is not None:
@@ -562,11 +578,8 @@ class TwitchStreamer:
                         # Convert image to NumPy array
                         image_np = np.array(image)
                         image_np = image_np.astype(np.uint8)
-
-                        # Convert audio buffer to NumPy array
-                        audio_data, _ = sf.read(audio, dtype='float32')
-                        left_audio = audio_data[:, 0]
-                        right_audio = audio_data[:, 1] if audio_data.shape[1] > 1 else audio_data[:, 0]
+                        # Convert RGB to BGR
+                        image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
                         # Send video frame to Twitch
                         ret, buffer = cv2.imencode('.jpg', image_np)
@@ -574,11 +587,17 @@ class TwitchStreamer:
                             self.videostream.send_video_frame(buffer)
                             logger.info("Sent video frame to Twitch")
                         else:
-                            logger.error("Failed to encode video frame")
+                            logger.error("TwitchStreamer: Failed to encode video frame")
 
-                        # Send audio frame to Twitch
-                        self.videostream.send_audio(left_audio, right_audio)
-                        logger.info("Sent audio frame to Twitch")
+                        # convert audio and spli tino channels
+                        audiobuf = io.BytesIO(audio)
+                        if audiobuf:
+                            left_audio, right_audio = self.prepare_audio(audiobuf)
+                            # Step 3: Pass stereo audio data to Twitch streamer
+                            self.videostream.send_audio(left_audio, right_audio)
+                            logger.info("Sent audio frame to Twitch")
+                        else:
+                            logger.error("Twitchstreamer: Failed to encode audio frame")
 
                     # Save to local files if enabled
                     if self.save_to_file:
@@ -1516,6 +1535,11 @@ def prompt_worker():
                 user_messages = request['history']
             else:
                 logger.error("--- prompt_worker(): Got back bad queue packet missing question or history: %s" % json.dumps(request))
+                try:
+                    if request == 'STOP':
+                        break
+                except:
+                    pass
                 continue
 
             if question == 'STOP':
@@ -1856,19 +1880,26 @@ if __name__ == "__main__":
     if os.environ['TWITCH_STREAM_KEY'] != "":
         args.twitchstreamkey = os.environ['TWITCH_STREAM_KEY']
 
-    LOGLEVEL = logger.INFO
+    LOGLEVEL = logging.INFO
 
     if args.loglevel == "info":
-        LOGLEVEL = logger.INFO
+        LOGLEVEL = logging.INFO
     elif args.loglevel == "debug":
-        LOGLEVEL = logger.DEBUG
+        LOGLEVEL = logging.DEBUG
     elif args.loglevel == "warning":
-        LOGLEVEL = logger.WARNING
-    elif args.loglevel == "verbose":
-        LOGLEVEL = logger.VERBOSE
+        LOGLEVEL = logging.WARNING
+    else:
+        LOGLEVEL = logging.INFO
 
     log_id = uuid.uuid4().hex
-    logger.basicConfig(filename=f"logs/gaib-{log_id}.log", level=LOGLEVEL)
+    logging.basicConfig(filename=f"logs/gaib-{log_id}.log", level=LOGLEVEL)
+    logger = logging.getLogger('GAIB')
+
+    ch = logging.StreamHandler()
+    ch.setLevel(LOGLEVEL)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
 
     ## Personality for chat
     current_personality = args.aipersonality
