@@ -559,8 +559,17 @@ class TwitchStreamer:
                         # Add text to image
                         image = self.add_text_to_image(image, text)
 
+                        # Convert image to NumPy array
+                        image_np = np.array(image)
+                        image_np = image_np.astype(np.uint8)
+
+                        # Convert audio buffer to NumPy array
+                        audio_data, _ = sf.read(audio, dtype='float32')
+                        left_audio = audio_data[:, 0]
+                        right_audio = audio_data[:, 1] if audio_data.shape[1] > 1 else audio_data[:, 0]
+
                         # Send video frame to Twitch
-                        ret, buffer = cv2.imencode('.jpg', image)
+                        ret, buffer = cv2.imencode('.jpg', image_np)
                         if ret:
                             self.videostream.send_video_frame(buffer)
                             logger.info("Sent video frame to Twitch")
@@ -568,8 +577,7 @@ class TwitchStreamer:
                             logger.error("Failed to encode video frame")
 
                         # Send audio frame to Twitch
-                        audio_frame = audio.raw_data
-                        self.videostream.send_audio(audio_frame, audio_frame)
+                        self.videostream.send_audio(left_audio, right_audio)
                         logger.info("Sent audio frame to Twitch")
 
                     # Save to local files if enabled
