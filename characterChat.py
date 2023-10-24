@@ -481,6 +481,9 @@ class TwitchStreamer:
         self.videostream = None
         self.video_writer = None
         self.audio_segment = AudioSegment.empty()
+        self.last_video_frame = None
+        self.last_audio_left = None
+        self.last_audio_right = None
 
     def add_data(self, data):
         self.data_queue.put(data)
@@ -549,13 +552,13 @@ class TwitchStreamer:
                     fps=30.,
                     enable_audio=True,
                     verbose=True) as self.videostream:
-
+                
                 while not self.stop_event.is_set():
                     if not self.data_queue.empty():
                         data = self.data_queue.get()
                         image = data['image']
                         audio = data['audio']
-                        text = data.get('text', '')  # Assuming text might be passed in the data dictionary
+                        text = data['text']
 
                         # Add text to image
                         image = self.add_text_to_image(image, text)
@@ -565,27 +568,22 @@ class TwitchStreamer:
                         image_np = image_np.astype(np.uint8)
                         # Convert RGB to BGR if needed
                         image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-
-                        # Send video frame to Twitch
-                        ret, buffer = cv2.imencode('.jpg', image_np)
-                        if ret:
-                            self.videostream.send_video_frame(buffer)
-                            logger.info("Sent video frame to Twitch")
-                        else:
-                            logger.error("TwitchStreamer: Failed to encode video frame")
+                        
+                        self.videostream.send_video_frame(image_np)
+                        logger.info("Sent video frame to Twitch")
 
                         # convert audio and spli tino channels
                         audio.seek(0)
                         audio_data, samplerate = sf.read(audio, dtype='float32')
-                        left_audio = audio_data[:, 0]
-                        right_audio = audio_data[:, 1]
-
-                        if right_audio and left_audio:
-                            # Step 3: Pass stereo audio data to Twitch streamer
-                            self.videostream.send_audio(left_audio, right_audio)
-                            logger.info("Sent audio frame to Twitch")
-                        else:
-                            logger.error("Twitchstreamer: Failed to encode audio frame")
+                       
+                        # Step 3: Pass stereo audio data to Twitch streamer
+                        self.videostream.send_audio(audio_data, audio_data)
+                        logger.info("Sent audio frame to Twitch")
+                    #else:
+                        #self.videostream.send_video_frame(last_image)
+                        #logger.info("Sent last video frame to Twitch")
+                        #self.videostream.send_audio(last_audio, last_audio)
+                        #logger.info("Sent last audio frame to Twitch")
 
                     # Save to local files if enabled
                     if self.save_to_file:
@@ -1235,10 +1233,6 @@ def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_persona
 
         ## User Question
         prompt = build_prompt(username, summary_message, ai_name, ai_personality)
-        history.append(ChatCompletionMessage(
-                role="user",
-                content="%s" % prompt,
-            ))
 
         ## History debug output
         logger.debug("Chat History: %s" % json.dumps(history))
@@ -1253,6 +1247,11 @@ def send_to_llm(queue_name, username, question, userhistory, ai_name, ai_persona
                 if len(history) > 2:
                     total_length -= len(history[1]['content'])
                     del history[1]
+
+        history.append(ChatCompletionMessage(
+                role="user",
+                content="%s" % prompt,
+            ))
 
         ## Queue prompt
         if queue_name == 'twitch':
