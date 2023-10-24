@@ -577,7 +577,7 @@ class TwitchStreamer:
                                 logger.info("Sending last image to Twitch")
                         else:
                             time.sleep(.01)
-                            continue             
+                            continue
 
                     # Add text to image
                     image = self.add_text_to_image(image, text)
@@ -592,12 +592,11 @@ class TwitchStreamer:
                     logger.info("Sent video frame to Twitch")
 
                     if audio is not None:
-                        # convert audio and spli tino channels
-                        audio.seek(0)
-                        audio_data, samplerate = sf.read(audio, dtype='float32')
+                        #audio.seek(0)
+                        #audio_data, samplerate = sf.read(audio, dtype='float32')
                     
                         # Step 3: Pass stereo audio data to Twitch streamer
-                        self.videostream.send_audio(audio_data, audio_data)
+                        self.videostream.send_audio(audio, audio)
                         logger.info("Sent audio frame to Twitch")
         except Exception as e:
             logger.error(f"An error occurred: {e}", exc_info=True)
