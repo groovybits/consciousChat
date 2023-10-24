@@ -484,6 +484,7 @@ class TwitchStreamer:
         self.last_video_frame = None
         self.last_audio_left = None
         self.last_audio_right = None
+        self.audio_frame_counter = 0
 
     def add_data(self, data):
         self.data_queue.put(data)
