@@ -553,54 +553,52 @@ class TwitchStreamer:
                     enable_audio=True,
                     verbose=False) as self.videostream:
                 
+                last_image = None
+                last_frame_time = time.time()
+                first_frame = False
                 while not self.stop_event.is_set():
+                    image = draw_default_frame_with_logo() #np.zeros((self.height, self.width, 3), dtype=np.uint8)  # Placeholder blank image
+                    audio = None
+                    text = ""
                     if not self.data_queue.empty():
                         data = self.data_queue.get()
                         image = data['image']
                         audio = data['audio']
-                        text = data['text']
+                        text = data['text']       
+                        last_frame_time = time.time()
+                        first_frame = True
+                    else:
+                        if not first_frame or time.time() - last_frame_time > 0.03:
+                            if last_image == None:
+                                image = draw_default_frame()
+                                audio = np.zeros((self.height, self.width, 3), dtype=np.uint8)  # Placeholder blank audio
+                            else:
+                                image = last_image
+                                logger.info("Sending last image to Twitch")
+                        else:
+                            time.sleep(.01)
+                            continue             
 
-                        # Add text to image
-                        image = self.add_text_to_image(image, text)
+                    # Add text to image
+                    image = self.add_text_to_image(image, text)
 
-                        ## If image is a PIL Image:
-                        image_np = np.array(image)
-                        image_np = image_np.astype(np.uint8)
-                        # Convert RGB to BGR if needed
-                        image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-                        
-                        self.videostream.send_video_frame(image_np)
-                        logger.info("Sent video frame to Twitch")
+                    ## If image is a PIL Image:
+                    image_np = np.array(image)
+                    image_np = image_np.astype(np.uint8)
+                    # Convert RGB to BGR if needed
+                    image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+                    
+                    self.videostream.send_video_frame(image_np)
+                    logger.info("Sent video frame to Twitch")
 
+                    if audio is not None:
                         # convert audio and spli tino channels
                         audio.seek(0)
                         audio_data, samplerate = sf.read(audio, dtype='float32')
-                       
+                    
                         # Step 3: Pass stereo audio data to Twitch streamer
                         self.videostream.send_audio(audio_data, audio_data)
                         logger.info("Sent audio frame to Twitch")
-                    else:
-                        #self.videostream.send_video_frame(last_image)
-                        logger.info("Sent blank video frame to Twitch")
-                        #self.videostream.send_audio(last_audio, last_audio)
-                        logger.info("Sent empty audio frame to Twitch")
-
-                    # Save to local files if enabled
-                    if self.save_to_file:
-                        # Initialize video writer if not done yet
-                        if self.video_writer is None:
-                            fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                            self.video_writer = cv2.VideoWriter(self.video_filename, fourcc, 30.0, (self.width, self.height))
-
-                        # Write video frame to file
-                        self.video_writer.write(cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
-
-                        # Append audio data to audio segment
-                        audio_segment = AudioSegment(data=audio.raw_data,
-                                                     sample_width=audio.sample_width,
-                                                     frame_rate=audio.frame_rate,
-                                                     channels=audio.channels)
-                        self.audio_segment += audio_segment
         except Exception as e:
             logger.error(f"An error occurred: {e}", exc_info=True)
 
