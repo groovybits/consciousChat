@@ -590,7 +590,7 @@ class TwitchStreamer:
                     self.videostream.send_video_frame(image_np)
                     logger.info("Sent video frame to Twitch")
 
-                    if audio is not None:
+                    if False and audio is not None:
                         #audio.seek(0)
                         #audio_data, samplerate = sf.read(audio, dtype='float32')
                     
