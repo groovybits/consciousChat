@@ -199,10 +199,6 @@ def simulate_image_generation(num_samples=5):
         # Introduce a delay to simulate real-time data generation
         time.sleep(random.uniform(0.5, 2))
 
-# Global variables to hold the last displayed image and text
-last_image = None
-last_text = ""
-
 ## Japanese writing on images
 def draw_japanese_text_on_image(image_np, text, position, font_path, font_size):
     # Convert to a PIL Image
@@ -360,18 +356,22 @@ def round_corners(im, rad):
     im.putalpha(alpha)
     return im
 
+last_image = None
+last_text = ""
+
 ## Render the image and text
 def render_worker():
-    try:
-        global last_image, last_text  # Declare the globals for modification
+    # Global variables to hold the last displayed image and text
+    global last_image, last_text  # Declare the globals for modification
 
+    try:
         # Check if the queue is empty or if we should exit
         if (mux_text_queue.empty() and mux_image_queue.empty()) or exit_now:
             return False
 
         ## Get text
-        text = ""
-        image = None
+        text = last_text
+        image = last_image
 
         if not mux_text_queue.empty():
             text = mux_text_queue.get()
@@ -389,7 +389,9 @@ def render_worker():
         if not mux_image_queue.empty():
             image = mux_image_queue.get()
 
-            image = round_corners(image, 50)
+            ## TODO fix this
+            #image = round_corners(image, 50)
+
             # Handle 'STOP' stream type
             if image == 'STOP':
                 return False
@@ -398,11 +400,7 @@ def render_worker():
             image = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
             last_image = image
         else:
-            if last_image is not None:
-                image = last_image
-            else:
-                image = draw_default_frame_with_logo() #np.zeros((args.width, args.height, 3), dtype=np.uint8)  # Initialized with a blank slate
-                last_image = image
+            last_image = draw_default_frame_with_logo()
 
         if image is not None:
             # Maintain aspect ratio and add black bars
@@ -549,36 +547,36 @@ class TwitchStreamer:
                     width=self.width,
                     height=self.height,
                     fps=10,
-                    enable_audio=False,
-                    verbose=False) as self.videostream:
+                    enable_audio=True,
+                    verbose=True) as self.videostream:
                 
-                last_image = None
                 last_frame_time = time.time()
                 first_frame = False
                 default_image = draw_default_frame_with_logo()
+                limage = default_image
+
                 while not self.stop_event.is_set():
                     image = None
                     audio = None
                     text = ""
+
                     if not self.data_queue.empty():
                         data = self.data_queue.get()
+
                         image = data['image']
                         audio = data['audio']
                         text = data['text']       
+
                         if image != None:
-                            last_image = image
                             first_frame = True
                             last_frame_time = time.time()
-                        ## If image is a PIL Image:
-                        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                        image = image.astype(np.uint8)
-                        image = np.array(image)
+
+                            limage = image
+                            limage = np.array(limage)
+                            limage = cv2.cvtColor(limage, cv2.COLOR_RGB2BGR)
                     else:
                         if not first_frame or time.time() - last_frame_time > 0.03:
-                            if last_image == None:
-                                image = default_image
-                            else:
-                                image = last_image
+                            image = limage
                             last_frame_time = time.time()
                         else:
                             time.sleep(.1)
@@ -586,16 +584,13 @@ class TwitchStreamer:
                     # Add text to image
                     image = self.add_text_to_image(image, text)
 
-                    #ret, buffer = cv2.imencode('.jpg', image)
+                    ## Send Video
+                    image = cv2.cvtColor(image, cv2.COLOR_BGR2YUV_I420)
                     self.videostream.send_video_frame(image)
 
-                    if False and audio is not None:
-                        #audio.seek(0)
-                        #audio_data, samplerate = sf.read(audio, dtype='float32')
-                    
-                        # Step 3: Pass stereo audio data to Twitch streamer
+                    ## Send Audio
+                    if audio is not None:
                         self.videostream.send_audio(audio, audio)
-                        #logger.info("Sent audio frame to Twitch")
         except Exception as e:
             logger.error(f"An error occurred: {e}", exc_info=True)
 
