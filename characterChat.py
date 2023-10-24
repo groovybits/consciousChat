@@ -555,8 +555,9 @@ class TwitchStreamer:
                 last_image = None
                 last_frame_time = time.time()
                 first_frame = False
+                default_image = draw_default_frame_with_logo()
                 while not self.stop_event.is_set():
-                    image = draw_default_frame_with_logo() #np.zeros((self.height, self.width, 3), dtype=np.uint8)  # Placeholder blank image
+                    image = None
                     audio = None
                     text = ""
                     if not self.data_queue.empty():
@@ -564,31 +565,29 @@ class TwitchStreamer:
                         image = data['image']
                         audio = data['audio']
                         text = data['text']       
-                        last_frame_time = time.time()
-                        first_frame = True
+                        if image != None:
+                            last_image = image
+                            first_frame = True
+                            last_frame_time = time.time()
+                        ## If image is a PIL Image:
+                        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                        image = image.astype(np.uint8)
+                        image = np.array(image)
                     else:
                         if not first_frame or time.time() - last_frame_time > 0.03:
                             if last_image == None:
-                                image = draw_default_frame()
-                                audio = np.zeros((self.height, self.width, 3), dtype=np.uint8)  # Placeholder blank audio
+                                image = default_image
                             else:
                                 image = last_image
-                                logger.info("Sending last image to Twitch")
+                            last_frame_time = time.time()
                         else:
                             time.sleep(.1)
-                            continue
 
                     # Add text to image
                     image = self.add_text_to_image(image, text)
 
-                    ## If image is a PIL Image:
-                    image_np = np.array(image)
-                    image_np = image_np.astype(np.uint8)
-                    # Convert RGB to BGR if needed
-                    image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-                    
-                    self.videostream.send_video_frame(image_np)
-                    logger.info("Sent video frame to Twitch")
+                    #ret, buffer = cv2.imencode('.jpg', image)
+                    self.videostream.send_video_frame(image)
 
                     if False and audio is not None:
                         #audio.seek(0)
@@ -596,7 +595,7 @@ class TwitchStreamer:
                     
                         # Step 3: Pass stereo audio data to Twitch streamer
                         self.videostream.send_audio(audio, audio)
-                        logger.info("Sent audio frame to Twitch")
+                        #logger.info("Sent audio frame to Twitch")
         except Exception as e:
             logger.error(f"An error occurred: {e}", exc_info=True)
 
@@ -713,7 +712,7 @@ def image_worker():
                     ).images[0]
             
             if streamer is not None:
-                streamer.add_data({'image': image, 'audio': AudioSegment.from_file(audio)})  # Add data to be streamed
+                streamer.add_data({'image': image, 'audio': audio, 'text': llm_text})  # Add data to be streamed
 
             # Store the image in the history and save to disk
             if args.saveimages:
