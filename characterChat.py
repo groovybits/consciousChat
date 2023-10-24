@@ -551,7 +551,7 @@ class TwitchStreamer:
                     height=self.height,
                     fps=30.,
                     enable_audio=True,
-                    verbose=True) as self.videostream:
+                    verbose=False) as self.videostream:
                 
                 while not self.stop_event.is_set():
                     if not self.data_queue.empty():
@@ -579,11 +579,11 @@ class TwitchStreamer:
                         # Step 3: Pass stereo audio data to Twitch streamer
                         self.videostream.send_audio(audio_data, audio_data)
                         logger.info("Sent audio frame to Twitch")
-                    #else:
+                    else:
                         #self.videostream.send_video_frame(last_image)
-                        #logger.info("Sent last video frame to Twitch")
+                        logger.info("Sent blank video frame to Twitch")
                         #self.videostream.send_audio(last_audio, last_audio)
-                        #logger.info("Sent last audio frame to Twitch")
+                        logger.info("Sent empty audio frame to Twitch")
 
                     # Save to local files if enabled
                     if self.save_to_file:
