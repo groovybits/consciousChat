@@ -540,8 +540,6 @@ class TwitchStreamer:
         self.stop_event.set()
         if self.video_writer is not None:
             self.video_writer.release()
-        if self.save_to_file:
-            self.audio_segment.export(self.audio_filename, format="wav")
 
     def stream(self):
         try:
@@ -549,8 +547,8 @@ class TwitchStreamer:
                     twitch_stream_key=self.twitch_stream_key,
                     width=self.width,
                     height=self.height,
-                    fps=30.,
-                    enable_audio=True,
+                    fps=10,
+                    enable_audio=False,
                     verbose=False) as self.videostream:
                 
                 last_image = None
@@ -576,7 +574,7 @@ class TwitchStreamer:
                                 image = last_image
                                 logger.info("Sending last image to Twitch")
                         else:
-                            time.sleep(.01)
+                            time.sleep(.1)
                             continue
 
                     # Add text to image
